@@ -87,7 +87,8 @@ def main():
     )
 
     # Parameter overrides
-    parser.add_argument("--num-plates", type=int, default=None)
+    parser.add_argument("--num-major-plates", type=int, default=None)
+    parser.add_argument("--num-minor-plates", type=int, default=None)
     parser.add_argument("--land-fraction", type=float, default=None)
     parser.add_argument("--sea-level", type=float, default=None)
 
@@ -101,8 +102,10 @@ def main():
     else:
         params = WorldParams(resolution=args.resolution, seed=args.seed)
         # Apply overrides
-        if args.num_plates is not None:
-            params.num_plates = args.num_plates
+        if args.num_major_plates is not None:
+            params.num_major_plates = args.num_major_plates
+        if args.num_minor_plates is not None:
+            params.num_minor_plates = args.num_minor_plates
         if args.land_fraction is not None:
             params.target_land_fraction = args.land_fraction
         if args.sea_level is not None:

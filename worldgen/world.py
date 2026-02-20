@@ -19,20 +19,22 @@ class WorldParams:
     seed: int = 42
 
     # Tectonics
-    num_plates: int = 15
+    num_major_plates: int = 8
+    num_minor_plates: int = 10
     continental_ratio: float = 0.4
-    plate_noise_weight: float = 0.4
+    plate_noise_weight: float = 0.5
     plate_noise_frequency: float = 6.0
+    plate_tilt_strength: float = 800.0  # meters of tilt across a plate
 
     # Elevation
-    elevation_noise_octaves: int = 8
-    elevation_noise_frequency: float = 5.0
-    elevation_noise_persistence: float = 0.55
+    elevation_noise_octaves: int = 6
+    elevation_noise_frequency: float = 4.0
+    elevation_noise_persistence: float = 0.50
     mountain_height: float = 8000.0  # meters
     ocean_depth: float = -8000.0  # meters
     continental_base: float = 200.0  # base continental elevation (m)
     oceanic_base: float = -3500.0  # base oceanic elevation (m)
-    boundary_mountain_width: float = 4.0  # degrees
+    boundary_mountain_width: float = 5.0  # degrees
     boundary_mountain_height: float = 5000.0  # meters
 
     # Land mask
