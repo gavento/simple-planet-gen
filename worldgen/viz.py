@@ -349,8 +349,15 @@ def plot_layer(world: WorldData, layer_name: str, ax=None):
     return PLOT_FUNCTIONS[layer_name](world, ax=ax)
 
 
-def plot_all(world: WorldData, output_dir: str | Path = "output"):
-    """Generate and save all available plots."""
+def plot_all(world: WorldData, output_dir: str | Path = "output", dpi: int | None = None):
+    """Generate and save all available plots.
+
+    Args:
+        dpi: Dots per inch. If None, auto-scales so image width ≈ data width.
+    """
+    if dpi is None:
+        # Auto: ~2 pixels per data cell in the plot area
+        dpi = max(150, round(world.width / 6))
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -360,7 +367,7 @@ def plot_all(world: WorldData, output_dir: str | Path = "output"):
             fig, ax = plt.subplots(1, 1, figsize=(16, 8))
             plot_fn(world, ax=ax)
             path = output_dir / f"{name}.png"
-            fig.savefig(path, dpi=150, bbox_inches="tight")
+            fig.savefig(path, dpi=dpi, bbox_inches="tight")
             plt.close(fig)
             print(f"  Saved {path}")
         except KeyError as e:

@@ -85,6 +85,10 @@ def main():
     parser.add_argument(
         "--plot-dir", type=str, default="output", help="Directory for plots"
     )
+    parser.add_argument(
+        "--dpi", type=int, default=None,
+        help="Plot DPI (default: auto-scale to match data resolution)",
+    )
 
     # Parameter overrides
     parser.add_argument("--num-major-plates", type=int, default=None)
@@ -133,16 +137,21 @@ def main():
         world.save(args.output)
 
     # --- Plot ---
+    # Resolve DPI: auto-scale so plot area covers data at ~2px per cell
+    # With figsize=16 and ~75% used for plot area, effective plot width = 12in
+    # For 2px/cell: dpi = resolution * 2 / 12
+    dpi = args.dpi if args.dpi else max(150, round(params.resolution / 6))
+
     if args.plot_all:
-        print("Generating all plots...")
-        plot_all(world, output_dir=args.plot_dir)
+        print(f"Generating all plots (dpi={dpi})...")
+        plot_all(world, output_dir=args.plot_dir, dpi=dpi)
     elif args.plot:
-        print(f"Plotting {args.plot}...")
+        print(f"Plotting {args.plot} (dpi={dpi})...")
         fig, ax = plt.subplots(1, 1, figsize=(16, 8))
         plot_layer(world, args.plot, ax=ax)
         out_path = Path(args.plot_dir) / f"{args.plot}.png"
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        fig.savefig(out_path, dpi=150, bbox_inches="tight")
+        fig.savefig(out_path, dpi=dpi, bbox_inches="tight")
         plt.close(fig)
         print(f"  Saved {out_path}")
 
