@@ -1,4 +1,4 @@
-"""Vectorized 3D Perlin noise and spherical fractal Brownian motion."""
+"""Vectorized 3D Perlin noise, spherical fBm, and domain warping."""
 
 from __future__ import annotations
 
@@ -103,8 +103,6 @@ def fbm_3d(
 
 
 def spherical_fbm(
-    lat_grid: np.ndarray,
-    lon_grid: np.ndarray,
     sphere_x: np.ndarray,
     sphere_y: np.ndarray,
     sphere_z: np.ndarray,
@@ -113,6 +111,7 @@ def spherical_fbm(
     persistence: float = 0.5,
     lacunarity: float = 2.0,
     seed: int = 0,
+    **_ignored,
 ) -> np.ndarray:
     """Generate fractal noise on a sphere.
 
@@ -144,4 +143,51 @@ def spherical_noise_single(
         sphere_x * frequency,
         sphere_y * frequency,
         sphere_z * frequency,
+    )
+
+
+def spherical_fbm_warped(
+    sphere_x: np.ndarray,
+    sphere_y: np.ndarray,
+    sphere_z: np.ndarray,
+    frequency: float = 4.0,
+    octaves: int = 6,
+    persistence: float = 0.5,
+    lacunarity: float = 2.0,
+    warp_strength: float = 0.4,
+    warp_octaves: int = 3,
+    seed: int = 0,
+) -> np.ndarray:
+    """Domain-warped fractal noise on a sphere.
+
+    First generates a warp field (3 noise channels), then offsets
+    the input coordinates before evaluating fBm. This produces
+    more organic, less repetitive terrain features.
+    """
+    sx = sphere_x * frequency
+    sy = sphere_y * frequency
+    sz = sphere_z * frequency
+
+    # Generate warp offsets (3 independent noise fields)
+    warp_noise_x = PerlinNoise3D(seed + 1000)
+    warp_noise_y = PerlinNoise3D(seed + 2000)
+    warp_noise_z = PerlinNoise3D(seed + 3000)
+
+    wx = fbm_3d(warp_noise_x, sx, sy, sz, octaves=warp_octaves,
+                lacunarity=lacunarity, persistence=0.5) * warp_strength * frequency
+    wy = fbm_3d(warp_noise_y, sx, sy, sz, octaves=warp_octaves,
+                lacunarity=lacunarity, persistence=0.5) * warp_strength * frequency
+    wz = fbm_3d(warp_noise_z, sx, sy, sz, octaves=warp_octaves,
+                lacunarity=lacunarity, persistence=0.5) * warp_strength * frequency
+
+    # Evaluate fBm with warped coordinates
+    noise = PerlinNoise3D(seed)
+    return fbm_3d(
+        noise,
+        sx + wx,
+        sy + wy,
+        sz + wz,
+        octaves=octaves,
+        lacunarity=lacunarity,
+        persistence=persistence,
     )

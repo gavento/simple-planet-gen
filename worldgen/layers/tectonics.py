@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 from scipy.spatial import cKDTree
 
-from worldgen.noise import spherical_noise_single
+from worldgen.noise import spherical_fbm
 from worldgen.world import WorldData, WorldParams
 
 
@@ -39,6 +39,9 @@ def _random_tangent_vectors(x, y, z, rng: np.random.RandomState):
 def generate_tectonics(world: WorldData, params: WorldParams):
     """Generate tectonic plates via noise-perturbed Voronoi on a sphere.
 
+    Uses multi-octave fBm at multiple scales to create complex,
+    irregular plate boundaries.
+
     Produces:
         plate_ids: (H, W) int32 - plate assignment for each cell
         plate_types: (num_plates,) int32 - 0=oceanic, 1=continental
@@ -69,13 +72,31 @@ def generate_tectonics(world: WorldData, params: WorldParams):
         [world.sphere_x.ravel(), world.sphere_y.ravel(), world.sphere_z.ravel()]
     )
 
-    # Add noise to perturb the Voronoi boundaries
-    noise_vals = spherical_noise_single(
-        world.sphere_x,
-        world.sphere_y,
-        world.sphere_z,
-        frequency=params.plate_noise_frequency,
+    # --- Multi-scale noise for complex boundary perturbation ---
+    # Large-scale warping (bends the boundaries broadly)
+    noise_large = spherical_fbm(
+        world.sphere_x, world.sphere_y, world.sphere_z,
+        frequency=3.0, octaves=3, persistence=0.5,
         seed=params.seed + 100,
+    )
+    # Medium-scale detail (wiggles and jags)
+    noise_medium = spherical_fbm(
+        world.sphere_x, world.sphere_y, world.sphere_z,
+        frequency=params.plate_noise_frequency, octaves=4, persistence=0.55,
+        seed=params.seed + 101,
+    )
+    # Fine-scale roughness (small irregularities)
+    noise_fine = spherical_fbm(
+        world.sphere_x, world.sphere_y, world.sphere_z,
+        frequency=params.plate_noise_frequency * 3, octaves=3, persistence=0.5,
+        seed=params.seed + 102,
+    )
+
+    # Combine scales with decreasing weight
+    combined_noise = (
+        0.55 * noise_large
+        + 0.30 * noise_medium
+        + 0.15 * noise_fine
     )
 
     # Query KD-tree for 2 nearest plates
@@ -85,16 +106,17 @@ def generate_tectonics(world: WorldData, params: WorldParams):
     idx1 = indices[:, 0].reshape(world.height, world.width)
     idx2 = indices[:, 1].reshape(world.height, world.width)
 
-    # Perturb distances with noise to make boundaries irregular
+    # Perturb the distance *difference* to shift the boundary
+    # This moves the boundary without distorting plate interiors
     noise_weight = params.plate_noise_weight
-    perturbed1 = dist1 + noise_weight * noise_vals * dist1.mean()
-    perturbed2 = dist2 + noise_weight * noise_vals * dist1.mean()
+    mean_dist = dist1.mean()
+    perturbation = noise_weight * combined_noise * mean_dist
 
-    # Assign to nearest plate (with perturbation)
-    plate_ids = np.where(perturbed1 <= perturbed2, idx1, idx2).astype(np.int32)
+    # Assign: plate 1 wins if its distance advantage survives the perturbation
+    plate_ids = np.where(dist1 - dist2 + perturbation <= 0, idx1, idx2).astype(np.int32)
 
-    # Boundary distance: angular distance between the two nearest plate distances
-    # Small values = near boundary
+    # Boundary distance: based on how close the two nearest plates are
+    # (unperturbed, for use by elevation layer)
     boundary_distance = np.degrees(np.arcsin(np.clip((dist2 - dist1) / 2, 0, 1)))
 
     # Compute convergence at boundaries (fully vectorized)
@@ -102,10 +124,10 @@ def generate_tectonics(world: WorldData, params: WorldParams):
 
     # Get the two plates meeting at each cell
     p1 = plate_ids
-    p2 = np.where(perturbed1 <= perturbed2, idx2, idx1).astype(np.int32)
+    p2 = np.where(dist1 - dist2 + perturbation <= 0, idx2, idx1).astype(np.int32)
 
     # Only compute for cells near boundaries where plates differ
-    near_boundary = (boundary_distance < 3.0) & (p1 != p2)
+    near_boundary = (boundary_distance < 5.0) & (p1 != p2)
 
     pa = p1[near_boundary]
     pb = p2[near_boundary]
