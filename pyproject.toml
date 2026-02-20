@@ -1,0 +1,15 @@
+[project]
+name = "worldgen"
+version = "0.1.0"
+description = "Realistic random world map generator"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.26",
+    "scipy>=1.12",
+    "matplotlib>=3.8",
+    "scikit-image>=0.22",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

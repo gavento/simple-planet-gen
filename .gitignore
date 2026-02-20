@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Generated data
+*.npz
+output/
+
+# System / editor
+.idea/
+.vscode/
+
+# uv
+.python-version
+
+# Matplotlib temp
+matplotlib-*/
