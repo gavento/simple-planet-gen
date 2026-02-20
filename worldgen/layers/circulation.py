@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+from scipy.ndimage import gaussian_filter, sobel
 
 from worldgen.world import WorldData, WorldParams
 
@@ -69,6 +70,47 @@ def generate_circulation(world: WorldData, params: WorldParams):
     itcz_damping = np.exp(-0.5 * (lat / 5) ** 2)
     wind_u *= 1 - 0.5 * itcz_damping
     wind_v *= 1 - 0.7 * itcz_damping
+
+    # --- Terrain-aware effects (require elevation + land_mask) ---
+    elevation = world["elevation"]
+    land_mask = world["land_mask"].astype(np.float64)
+
+    # (a) Topographic drag — mountains and land reduce wind speed
+    elev_above_sea = np.clip(elevation, 0, None)
+    terrain_drag = 1.0 - params.wind_terrain_drag * np.clip(elev_above_sea / 3000.0, 0, 1) * land_mask
+    wind_u *= terrain_drag
+    wind_v *= terrain_drag
+
+    # (b) Thermal wind — land-sea pressure gradient creates onshore flow
+    # Smooth land mask and compute gradient pointing from ocean toward land
+    smooth_land = gaussian_filter(land_mask, sigma=max(3, world.width // 80))
+    grad_y = sobel(smooth_land, axis=0)  # d(land)/d(lat)
+    grad_x = sobel(smooth_land, axis=1)  # d(land)/d(lon)
+    # Scale by latitude: strongest in tropics/subtropics, weak at poles
+    thermal_scale = np.cos(np.radians(lat)) ** 2 * params.wind_thermal_contrast
+    wind_u += grad_x * thermal_scale * max_wind
+    wind_v += grad_y * thermal_scale * max_wind
+
+    # (c) Topographic deflection — wind hitting mountains is rotated parallel to ridges
+    smooth_elev = gaussian_filter(elevation.astype(np.float64), sigma=max(3, world.width // 150))
+    elev_grad_y = sobel(smooth_elev, axis=0)  # slope in y (lat) direction
+    elev_grad_x = sobel(smooth_elev, axis=1)  # slope in x (lon) direction
+    # Steepness
+    slope_mag = np.sqrt(elev_grad_x**2 + elev_grad_y**2)
+    slope_mag_norm = np.clip(slope_mag / (slope_mag.max() + 1e-10), 0, 1)
+    # Dot product: wind · slope_gradient (positive = wind blows uphill)
+    dot = wind_u * elev_grad_x + wind_v * elev_grad_y
+    uphill = np.clip(dot, 0, None)  # only deflect when blowing uphill
+    # Rotate wind to be more parallel to contours (perpendicular to gradient)
+    deflect = params.wind_deflection_strength * slope_mag_norm
+    # Contour-parallel direction: rotate gradient 90° = (-grad_y, grad_x)
+    grad_norm = slope_mag + 1e-10
+    contour_x = -elev_grad_y / grad_norm
+    contour_y = elev_grad_x / grad_norm
+    # Add deflection component (scaled by how much wind was blowing uphill)
+    uphill_frac = uphill / (np.abs(dot) + 1e-10)
+    wind_u += deflect * uphill_frac * contour_x * np.sqrt(wind_u**2 + wind_v**2)
+    wind_v += deflect * uphill_frac * contour_y * np.sqrt(wind_u**2 + wind_v**2)
 
     world["wind_u"] = wind_u.astype(np.float32)
     world["wind_v"] = wind_v.astype(np.float32)

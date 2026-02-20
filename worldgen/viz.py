@@ -92,6 +92,56 @@ def plot_elevation(world: WorldData, ax=None, show_colorbar=True):
     return im
 
 
+def plot_elevation_land(world: WorldData, ax=None, show_colorbar=True):
+    """Plot elevation for land only, with uniform ocean color."""
+    if ax is None:
+        _, ax = plt.subplots(1, 1, figsize=(16, 8))
+    elevation = world["elevation"]
+    land_mask = world["land_mask"]
+
+    # Show land elevation only; mask ocean
+    display = np.where(land_mask, elevation, np.nan)
+    # Uniform ocean background
+    ax.set_facecolor("#2266aa")
+    im = ax.imshow(
+        display,
+        extent=_extent(world),
+        cmap=TERRAIN_CMAP,
+        vmin=0,
+        vmax=TERRAIN_VMAX,
+        interpolation="bilinear",
+        origin="upper",
+    )
+    if show_colorbar:
+        plt.colorbar(im, ax=ax, label="Elevation (m)", shrink=0.7)
+    _setup_ax(ax, "Land Elevation", world)
+    return im
+
+
+def plot_temperature_land(world: WorldData, ax=None, show_colorbar=True):
+    """Plot temperature for land only, with uniform ocean color."""
+    if ax is None:
+        _, ax = plt.subplots(1, 1, figsize=(16, 8))
+    temp = world["temperature"]
+    land_mask = world["land_mask"]
+
+    display = np.where(land_mask, temp, np.nan)
+    ax.set_facecolor("#2266aa")
+    im = ax.imshow(
+        display,
+        extent=_extent(world),
+        cmap="RdBu_r",
+        vmin=-40,
+        vmax=35,
+        interpolation="bilinear",
+        origin="upper",
+    )
+    if show_colorbar:
+        plt.colorbar(im, ax=ax, label="Temperature (°C)", shrink=0.7)
+    _setup_ax(ax, "Land Temperature", world)
+    return im
+
+
 def plot_plates(world: WorldData, ax=None):
     """Plot tectonic plates with boundaries."""
     if ax is None:
@@ -330,9 +380,11 @@ def plot_ocean_currents(world: WorldData, ax=None, show_colorbar=True):
 PLOT_FUNCTIONS = {
     "plates": plot_plates,
     "elevation": plot_elevation,
+    "elevation_land": plot_elevation_land,
     "land_mask": plot_land_mask,
     "ocean_currents": plot_ocean_currents,
     "temperature": plot_temperature,
+    "temperature_land": plot_temperature_land,
     "winds": plot_winds,
     "precipitation": plot_precipitation,
     "rivers": plot_rivers,
@@ -361,12 +413,12 @@ def plot_all(world: WorldData, output_dir: str | Path = "output", dpi: int | Non
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    for name, plot_fn in PLOT_FUNCTIONS.items():
+    for idx, (name, plot_fn) in enumerate(PLOT_FUNCTIONS.items(), 1):
         # Check if required data exists
         try:
             fig, ax = plt.subplots(1, 1, figsize=(16, 8))
             plot_fn(world, ax=ax)
-            path = output_dir / f"{name}.png"
+            path = output_dir / f"{idx:02d}-{name}.png"
             fig.savefig(path, dpi=dpi, bbox_inches="tight")
             plt.close(fig)
             print(f"  Saved {path}")

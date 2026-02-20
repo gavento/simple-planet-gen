@@ -19,12 +19,14 @@ class WorldParams:
     seed: int = 42
 
     # Tectonics
-    num_major_plates: int = 8
-    num_minor_plates: int = 10
+    num_major_plates: int = 7
+    num_minor_plates: int = 20
     continental_ratio: float = 0.4
     plate_noise_weight: float = 0.5
     plate_noise_frequency: float = 6.0
     plate_tilt_strength: float = 800.0  # meters of tilt across a plate
+    plate_warp_strength: float = 0.15  # domain warp for plate boundaries
+    plate_warp_frequency: float = 3.0  # warp noise frequency
 
     # Elevation
     elevation_noise_octaves: int = 6
@@ -49,6 +51,9 @@ class WorldParams:
 
     # Circulation
     max_wind_speed: float = 1.0  # normalized units
+    wind_terrain_drag: float = 0.4  # wind speed reduction over high terrain
+    wind_thermal_contrast: float = 0.15  # onshore flow from land/ocean thermal contrast
+    wind_deflection_strength: float = 0.3  # topographic deflection of wind
 
     # Precipitation
     base_precipitation: float = 2000.0  # mm/year at equator over ocean

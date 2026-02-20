@@ -22,7 +22,7 @@ PIPELINE = [
     ("tectonics", generate_tectonics, []),
     ("elevation", generate_elevation, ["tectonics"]),
     ("land_mask", generate_land_mask, ["elevation"]),
-    ("circulation", generate_circulation, ["land_mask"]),
+    ("circulation", generate_circulation, ["land_mask", "elevation"]),
     ("ocean_currents", generate_ocean_currents, ["circulation", "land_mask"]),
     ("temperature", generate_temperature, ["elevation", "land_mask", "ocean_currents"]),
     ("precipitation", generate_precipitation, ["temperature", "circulation", "elevation", "land_mask"]),

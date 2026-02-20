@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 from scipy.spatial import cKDTree
 
-from worldgen.noise import spherical_fbm
+from worldgen.noise import spherical_fbm, spherical_fbm_warped
 from worldgen.world import WorldData, WorldParams
 
 
@@ -124,12 +124,33 @@ def generate_tectonics(world: WorldData, params: WorldParams):
     mx, my, mz = _well_spaced_points_on_sphere(n_major, rng)
     major_centers = np.column_stack([mx, my, mz])
 
-    # Minor plates: clustered near major plate boundaries
+    # Minor plates: half near boundaries (microplates), half random (medium plates)
     if n_minor > 0:
-        minx, miny, minz = _points_near_boundaries(n_minor, major_centers, rng)
-        cx = np.concatenate([mx, minx])
-        cy = np.concatenate([my, miny])
-        cz = np.concatenate([mz, minz])
+        n_micro = n_minor // 2
+        n_medium = n_minor - n_micro
+
+        parts_x, parts_y, parts_z = [mx], [my], [mz]
+
+        # Medium plates: randomly placed with moderate spacing
+        if n_medium > 0:
+            med_x, med_y, med_z = _random_points_on_sphere(n_medium, rng)
+            parts_x.append(med_x)
+            parts_y.append(med_y)
+            parts_z.append(med_z)
+
+        # Microplates: clustered near boundaries of all existing plates
+        if n_micro > 0:
+            all_so_far = np.column_stack(
+                [np.concatenate(parts_x), np.concatenate(parts_y), np.concatenate(parts_z)]
+            )
+            mic_x, mic_y, mic_z = _points_near_boundaries(n_micro, all_so_far, rng)
+            parts_x.append(mic_x)
+            parts_y.append(mic_y)
+            parts_z.append(mic_z)
+
+        cx = np.concatenate(parts_x)
+        cy = np.concatenate(parts_y)
+        cz = np.concatenate(parts_z)
     else:
         cx, cy, cz = mx, my, mz
 
@@ -161,49 +182,72 @@ def generate_tectonics(world: WorldData, params: WorldParams):
     # Random tilt magnitude (some plates tilt more than others)
     tilt_mags = rng.uniform(0.3, 1.0, num_plates) * params.plate_tilt_strength
 
-    # --- Per-plate base elevation offsets ---
-    # Each plate has a slightly different base elevation (cratons, basins)
-    plate_base_offsets = rng.normal(0, 300, num_plates).astype(np.float32)
-    # Continental plates: offset range +-500m, oceanic: +-200m
-    plate_base_offsets *= np.where(plate_types == 1, 1.5, 0.6)
-
     # --- Build KD-tree and assign cells ---
     centers = np.column_stack([cx, cy, cz])
     tree = cKDTree(centers)
+
+    # --- Per-plate base elevation offsets (spatially correlated) ---
+    plate_base_offsets = rng.normal(0, 200, num_plates).astype(np.float32)
+    # Relax offsets so nearby plates have similar heights
+    for _ in range(3):
+        _, neighbor_idx = tree.query(centers, k=min(5, num_plates))
+        neighbor_mean = plate_base_offsets[neighbor_idx[:, 1:]].mean(axis=1)
+        plate_base_offsets = 0.5 * plate_base_offsets + 0.5 * neighbor_mean
+    # Continental plates: offset range +-500m, oceanic: +-200m
+    plate_base_offsets *= np.where(plate_types == 1, 1.2, 0.5)
 
     grid_points = np.column_stack(
         [world.sphere_x.ravel(), world.sphere_y.ravel(), world.sphere_z.ravel()]
     )
 
-    # Multi-scale boundary noise
-    noise_large = spherical_fbm(
+    # --- Domain-warped Voronoi boundaries ---
+    # Warp sample coordinates for organic, curving plate boundaries
+    warp_x = spherical_fbm_warped(
         world.sphere_x, world.sphere_y, world.sphere_z,
-        frequency=3.0, octaves=3, persistence=0.5,
-        seed=params.seed + 100,
+        frequency=params.plate_warp_frequency, octaves=3, persistence=0.5,
+        warp_strength=0.2, seed=params.seed + 200,
     )
-    noise_medium = spherical_fbm(
+    warp_y = spherical_fbm_warped(
         world.sphere_x, world.sphere_y, world.sphere_z,
-        frequency=params.plate_noise_frequency, octaves=4, persistence=0.55,
-        seed=params.seed + 101,
+        frequency=params.plate_warp_frequency, octaves=3, persistence=0.5,
+        warp_strength=0.2, seed=params.seed + 201,
     )
-    noise_fine = spherical_fbm(
+    warp_z = spherical_fbm_warped(
         world.sphere_x, world.sphere_y, world.sphere_z,
-        frequency=params.plate_noise_frequency * 3, octaves=3, persistence=0.5,
-        seed=params.seed + 102,
+        frequency=params.plate_warp_frequency, octaves=3, persistence=0.5,
+        warp_strength=0.2, seed=params.seed + 202,
     )
-    combined_noise = 0.55 * noise_large + 0.30 * noise_medium + 0.15 * noise_fine
 
-    # Query 2 nearest plates
-    dists, indices = tree.query(grid_points, k=2)
+    ws = params.plate_warp_strength
+    warped_x = world.sphere_x + ws * warp_x
+    warped_y = world.sphere_y + ws * warp_y
+    warped_z = world.sphere_z + ws * warp_z
+    # Re-normalize to unit sphere
+    warped_norm = np.sqrt(warped_x**2 + warped_y**2 + warped_z**2)
+    warped_x /= warped_norm
+    warped_y /= warped_norm
+    warped_z /= warped_norm
+
+    warped_points = np.column_stack(
+        [warped_x.ravel(), warped_y.ravel(), warped_z.ravel()]
+    )
+
+    # Query 2 nearest plates using warped coordinates
+    dists, indices = tree.query(warped_points, k=2)
     dist1 = dists[:, 0].reshape(world.height, world.width)
     dist2 = dists[:, 1].reshape(world.height, world.width)
     idx1 = indices[:, 0].reshape(world.height, world.width)
     idx2 = indices[:, 1].reshape(world.height, world.width)
 
-    # Perturb boundary
-    noise_weight = params.plate_noise_weight
+    # Fine-detail additive noise (secondary perturbation)
+    fine_noise = spherical_fbm(
+        world.sphere_x, world.sphere_y, world.sphere_z,
+        frequency=params.plate_noise_frequency * 2, octaves=3, persistence=0.5,
+        seed=params.seed + 102,
+    )
+    noise_weight = params.plate_noise_weight * 0.3  # reduced since warp does the heavy lifting
     mean_dist = dist1.mean()
-    perturbation = noise_weight * combined_noise * mean_dist
+    perturbation = noise_weight * fine_noise * mean_dist
 
     plate_ids = np.where(
         dist1 - dist2 + perturbation <= 0, idx1, idx2
