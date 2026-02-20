@@ -34,8 +34,8 @@ class WorldParams:
     ocean_depth: float = -8000.0  # meters
     continental_base: float = 200.0  # base continental elevation (m)
     oceanic_base: float = -3500.0  # base oceanic elevation (m)
-    boundary_mountain_width: float = 5.0  # degrees
-    boundary_mountain_height: float = 5000.0  # meters
+    boundary_mountain_width: float = 7.0  # degrees
+    boundary_mountain_height: float = 4000.0  # meters
 
     # Land mask
     sea_level: float | None = None  # None = auto-adjust
@@ -56,8 +56,19 @@ class WorldParams:
     rain_shadow_factor: float = 0.15  # rainfall multiplier for leeward slopes
     moisture_decay_land: float = 0.002  # moisture decay per km over land
 
+    # Ocean currents
+    western_boundary_warmth: float = 8.0  # °C max SST anomaly for warm currents
+    eastern_boundary_cooling: float = 5.0  # °C max SST anomaly for cold currents
+    current_width: float = 10.0  # degrees of lat/lon for current influence
+
+    # Temperature - continentality
+    continentality_strength: float = 0.25  # amplification of temp departure inland
+    coast_moderation_strength: float = 0.4  # how strongly coast temps follow ocean
+
     # Rivers
     river_threshold: float = 0.02  # fraction of max accumulation to show
+    pit_fill_epsilon: float = 0.01  # meters, minimum slope in filled terrain
+    valley_carve_strength: float = 50.0  # meters, max valley depth scaling
 
     # Biomes
     # (uses temperature + precipitation, no extra params)

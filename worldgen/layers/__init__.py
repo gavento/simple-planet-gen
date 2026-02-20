@@ -11,6 +11,7 @@ from worldgen.layers.biomes import generate_biomes
 from worldgen.layers.circulation import generate_circulation
 from worldgen.layers.elevation import generate_elevation
 from worldgen.layers.land_mask import generate_land_mask
+from worldgen.layers.ocean_currents import generate_ocean_currents
 from worldgen.layers.precipitation import generate_precipitation
 from worldgen.layers.rivers import generate_rivers
 from worldgen.layers.tectonics import generate_tectonics
@@ -21,8 +22,9 @@ PIPELINE = [
     ("tectonics", generate_tectonics, []),
     ("elevation", generate_elevation, ["tectonics"]),
     ("land_mask", generate_land_mask, ["elevation"]),
-    ("temperature", generate_temperature, ["elevation", "land_mask"]),
     ("circulation", generate_circulation, ["land_mask"]),
+    ("ocean_currents", generate_ocean_currents, ["circulation", "land_mask"]),
+    ("temperature", generate_temperature, ["elevation", "land_mask", "ocean_currents"]),
     ("precipitation", generate_precipitation, ["temperature", "circulation", "elevation", "land_mask"]),
     ("rivers", generate_rivers, ["elevation", "precipitation", "land_mask"]),
     ("biomes", generate_biomes, ["temperature", "precipitation", "land_mask"]),
@@ -33,8 +35,9 @@ LAYER_PRIMARY_KEY = {
     "tectonics": "plate_ids",
     "elevation": "elevation",
     "land_mask": "land_mask",
-    "temperature": "temperature",
     "circulation": "wind_u",
+    "ocean_currents": "sst_anomaly",
+    "temperature": "temperature",
     "precipitation": "precipitation",
     "rivers": "flow_accumulation",
     "biomes": "biome_id",

@@ -128,8 +128,20 @@ def generate_elevation(world: WorldData, params: WorldParams):
     bw_core = params.boundary_mountain_width
     bw_foothills = bw_core * 3.5
 
-    core_factor = np.exp(-0.5 * (boundary_distance / bw_core) ** 2)
-    foothill_factor = np.exp(-0.5 * (boundary_distance / bw_foothills) ** 2)
+    # --- Wobble: shift the ridge laterally so it doesn't follow
+    # the plate boundary arc perfectly ---
+    wobble_noise = spherical_fbm_warped(
+        sx, sy, sz,
+        frequency=6.0, octaves=3, persistence=0.5,
+        warp_strength=0.2, warp_octaves=2,
+        seed=params.seed + 520,
+    )
+    boundary_distance_wobbled = np.maximum(
+        boundary_distance + wobble_noise * bw_core * 0.6, 0
+    )
+
+    core_factor = np.exp(-0.5 * (boundary_distance_wobbled / bw_core) ** 2)
+    foothill_factor = np.exp(-0.5 * (boundary_distance_wobbled / bw_foothills) ** 2)
 
     # Variable height along mountain ranges
     mountain_noise = spherical_fbm(
@@ -139,6 +151,16 @@ def generate_elevation(world: WorldData, params: WorldParams):
     )
     height_variation = np.clip(0.6 + 0.4 * mountain_noise, 0.25, 1.0)
 
+    # --- Continuity breaks: noise that occasionally drops mountain
+    # height to near zero, creating gaps/passes in ranges ---
+    continuity_noise = spherical_fbm(
+        sx, sy, sz,
+        frequency=10.0, octaves=2, persistence=0.5,
+        seed=params.seed + 530,
+    )
+    # Values mostly ~1, but dip toward 0 in some spots
+    continuity = np.clip(continuity_noise * 1.5 + 0.7, 0.05, 1.0)
+
     # Variable width (mountains wider in some sections)
     width_noise = spherical_fbm(
         sx, sy, sz,
@@ -146,7 +168,7 @@ def generate_elevation(world: WorldData, params: WorldParams):
         seed=params.seed + 510,
     )
     width_variation = np.clip(0.7 + 0.4 * width_noise, 0.4, 1.3)
-    core_factor_var = np.exp(-0.5 * (boundary_distance / (bw_core * width_variation)) ** 2)
+    core_factor_var = np.exp(-0.5 * (boundary_distance_wobbled / (bw_core * width_variation)) ** 2)
 
     conv_strength = np.clip(boundary_convergence, 0, None)
     div_strength = np.clip(-boundary_convergence, 0, None)
@@ -156,15 +178,18 @@ def generate_elevation(world: WorldData, params: WorldParams):
     div_max = np.percentile(div_strength[div_strength > 0], 95) if np.any(div_strength > 0) else 1.0
     div_norm = np.clip(div_strength / max(div_max, 1e-6), 0, 1.5)
 
-    mountain_height = params.boundary_mountain_height * height_variation * conv_norm
+    mountain_height = params.boundary_mountain_height * height_variation * conv_norm * continuity
     mountains = (
         0.55 * mountain_height * core_factor_var
         + 0.45 * mountain_height * foothill_factor
     )
 
-    # Continental-continental convergence: extra height (Himalayas-like)
+    # Continental-continental convergence: modest extra height
     both_cont = gaussian_filter(is_continental, sigma=3)
-    mountains *= 1.0 + 0.4 * np.clip(both_cont - 0.3, 0, 1) * core_factor
+    mountains *= 1.0 + 0.15 * np.clip(both_cont - 0.3, 0, 1) * core_factor
+
+    # Smooth the mountain contribution to soften sharp ridges
+    mountains = gaussian_filter(mountains, sigma=max(2, W // 300))
 
     # Divergent: mid-ocean ridges
     ridge_height = 1200.0 * div_norm * height_variation

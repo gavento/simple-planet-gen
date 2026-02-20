@@ -296,12 +296,42 @@ def plot_biomes(world: WorldData, ax=None):
     return im
 
 
+def plot_ocean_currents(world: WorldData, ax=None, show_colorbar=True):
+    """Plot sea surface temperature anomaly from ocean currents."""
+    if ax is None:
+        _, ax = plt.subplots(1, 1, figsize=(16, 8))
+    sst = world["sst_anomaly"]
+    land_mask = world["land_mask"]
+
+    # Show SST anomaly over ocean, grey out land
+    display = np.where(land_mask, np.nan, sst)
+    im = ax.imshow(
+        display,
+        extent=_extent(world),
+        cmap="RdBu_r",
+        vmin=-10,
+        vmax=10,
+        interpolation="bilinear",
+        origin="upper",
+    )
+    # Grey land overlay
+    land_overlay = np.full((*land_mask.shape, 4), 0.0)
+    land_overlay[land_mask] = [0.5, 0.5, 0.5, 0.8]
+    ax.imshow(land_overlay, extent=_extent(world), interpolation="nearest", origin="upper")
+
+    if show_colorbar:
+        plt.colorbar(im, ax=ax, label="SST Anomaly (°C)", shrink=0.7)
+    _setup_ax(ax, "Ocean Current SST Anomaly", world)
+    return im
+
+
 # --- Dispatcher ---
 
 PLOT_FUNCTIONS = {
     "plates": plot_plates,
     "elevation": plot_elevation,
     "land_mask": plot_land_mask,
+    "ocean_currents": plot_ocean_currents,
     "temperature": plot_temperature,
     "winds": plot_winds,
     "precipitation": plot_precipitation,
