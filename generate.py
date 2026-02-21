@@ -91,7 +91,7 @@ def main():
         help="Plot a specific layer",
     )
     parser.add_argument(
-        "--plot-all", action="store_true", help="Generate all plots"
+        "--plot-all", action="store_true", help="Generate all plots (default unless --plot is given)"
     )
     parser.add_argument(
         "--dpi", type=int, default=None,
@@ -170,10 +170,7 @@ def main():
     # --- Plot ---
     dpi = args.dpi if args.dpi else max(150, round(params.resolution / 6))
 
-    if args.plot_all:
-        print(f"Generating all plots (dpi={dpi})...")
-        plot_all(world, output_dir=output_dir, dpi=dpi)
-    elif args.plot:
+    if args.plot:
         print(f"Plotting {args.plot} (dpi={dpi})...")
         fig, ax = plt.subplots(1, 1, figsize=(16, 8))
         plot_layer(world, args.plot, ax=ax)
@@ -182,6 +179,9 @@ def main():
         fig.savefig(out_path, dpi=dpi, bbox_inches="tight")
         plt.close(fig)
         print(f"  Saved {out_path}")
+    else:
+        print(f"Generating all plots (dpi={dpi})...")
+        plot_all(world, output_dir=output_dir, dpi=dpi)
 
 
 if __name__ == "__main__":
