@@ -5,9 +5,10 @@ from __future__ import annotations
 from pathlib import Path
 
 import matplotlib.colors as mcolors
+import matplotlib.patheffects as mpe
 import matplotlib.pyplot as plt
 import numpy as np
-from scipy.ndimage import gaussian_filter
+from scipy.ndimage import gaussian_filter, label
 
 from worldgen.layers.biomes import BIOME_COLORS, BIOME_NAMES
 from worldgen.world import WorldData
@@ -435,6 +436,36 @@ def _render_lake_overlay(world, ax):
     )
 
 
+def _render_lake_labels(world, ax):
+    """Annotate each lake with its surface elevation."""
+    if "lake_mask" not in world:
+        return
+    lake_mask = world["lake_mask"]
+    if not np.any(lake_mask):
+        return
+    elevation = world["elevation"]
+    H, W = world.height, world.width
+    labels, n_lakes = label(lake_mask)
+
+    for lbl in range(1, n_lakes + 1):
+        rows, cols = np.where(labels == lbl)
+        if len(rows) < 4:
+            continue
+        # Centroid in pixel coords → lon/lat
+        cr = rows.mean()
+        cc = cols.mean()
+        lat = 90.0 - (cr + 0.5) * 180.0 / H
+        lon = -180.0 + (cc + 0.5) * 360.0 / W
+        elev = float(elevation[rows[0], cols[0]])
+        ax.text(
+            lon, lat, f"{elev:.0f}m",
+            ha="center", va="center",
+            fontsize=5, color="white",
+            fontweight="bold",
+            path_effects=[mpe.withStroke(linewidth=1.5, foreground="black")],
+        )
+
+
 def _render_river_overlay(world, ax):
     """Render river overlay with flow-proportional width.
 
@@ -502,6 +533,7 @@ def plot_rivers_land(world: WorldData, ax=None, cbar_ax=None, **_kw):
     # Background: land-only elevation (with colorbar, includes lake overlay)
     plot_terrain_carved(world, ax=ax, cbar_ax=cbar_ax)
     _render_river_overlay(world, ax)
+    _render_lake_labels(world, ax)
     _setup_ax(ax, "Rivers (land)", world)
 
 

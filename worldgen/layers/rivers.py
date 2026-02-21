@@ -5,7 +5,7 @@ from __future__ import annotations
 import heapq
 
 import numpy as np
-from scipy.ndimage import gaussian_filter
+from scipy.ndimage import binary_dilation, gaussian_filter, label
 
 from worldgen.world import WorldData, WorldParams
 
@@ -28,14 +28,14 @@ def _priority_flood(elevation, land_mask, H, W, epsilon=0.01):
     resolved = np.zeros((H, W), dtype=bool)
     heap = []  # (elevation, row, col)
 
-    # Seed: all ocean cells (they are already at correct elevation)
+    # Seed: all non-land cells (ocean + lakes)
     ocean_rows, ocean_cols = np.where(~land_mask)
     for i in range(len(ocean_rows)):
         r, c = int(ocean_rows[i]), int(ocean_cols[i])
         resolved[r, c] = True
         heapq.heappush(heap, (float(filled[r, c]), r, c))
 
-    # Also seed pole boundary rows (flow cannot exit the poles)
+    # Also seed pole boundary rows
     for c in range(W):
         for r in (0, H - 1):
             if not resolved[r, c]:
@@ -115,8 +115,122 @@ def _accumulate_flow(flow_dr, flow_dc, precipitation, land_mask, elevation, H, W
     return accumulation
 
 
+# --- Lake-aware flow routing ---
+
+
+def _find_lake_pour_points(lake_mask, land_mask, elevation, H, W):
+    """Find pour point (lowest rim cell) for each lake.
+
+    Returns (lake_labels, pour_points) where pour_points maps
+    label -> (row, col).
+    """
+    lake_labels, n_lakes = label(lake_mask)
+    pour_points = {}
+
+    for lbl in range(1, n_lakes + 1):
+        water = lake_labels == lbl
+        padded = np.pad(water, ((0, 0), (1, 1)), mode="wrap")
+        dilated = binary_dilation(padded, structure=np.ones((3, 3)))[:, 1:-1]
+        rim = dilated & ~water & land_mask
+
+        rim_r, rim_c = np.where(rim)
+        if len(rim_r) == 0:
+            continue
+
+        idx = np.argmin(elevation[rim_r, rim_c])
+        pour_points[lbl] = (int(rim_r[idx]), int(rim_c[idx]))
+
+    return lake_labels, pour_points
+
+
+def _fix_pour_point_d8(pour_points, flow_dr, flow_dc, lake_mask, elevation):
+    """Override D8 at pour points to flow away from lakes.
+
+    Without this, pour points flow INTO the lake (downhill to lake surface).
+    We redirect them to the steepest non-lake neighbor instead.
+    """
+    H, W = flow_dr.shape
+    for _lbl, (pp_r, pp_c) in pour_points.items():
+        best_slope = -np.inf
+        best_dr, best_dc = 0, 0
+        for k in range(8):
+            nr = pp_r + int(_DR[k])
+            nc = (pp_c + int(_DC[k])) % W
+            if nr < 0 or nr >= H:
+                continue
+            if lake_mask[nr, nc]:
+                continue  # must not flow into lake
+            slope = (elevation[pp_r, pp_c] - elevation[nr, nc]) / _DIST[k]
+            if slope > best_slope:
+                best_slope = slope
+                best_dr = int(_DR[k])
+                best_dc = int(_DC[k])
+
+        flow_dr[pp_r, pp_c] = best_dr
+        flow_dc[pp_r, pp_c] = best_dc
+
+
+def _inject_lake_outflow(
+    lake_labels, pour_points, accumulation,
+    flow_dr, flow_dc, lake_mask, precipitation, elevation, H, W,
+):
+    """Route flow through lakes: sum inflow, inject outflow at pour point.
+
+    For each lake, total outflow = (flow draining in from land rim cells)
+    + (precipitation falling on lake surface). This outflow is added to
+    every cell downstream of the pour point.
+
+    Lakes are processed highest-first so cascading lakes work correctly.
+    """
+    # Sort by pour point elevation (highest first → drains into lower lakes)
+    pp_order = sorted(
+        pour_points.items(),
+        key=lambda item: elevation[item[1][0], item[1][1]],
+        reverse=True,
+    )
+
+    for lbl, (pp_r, pp_c) in pp_order:
+        water = lake_labels == lbl
+
+        # Inflow: accumulation on lake cells (land rim cells drained into them)
+        inflow = float(np.sum(accumulation[water]))
+        # Lake's own precipitation
+        lake_precip = float(np.sum(precipitation[water]))
+        outflow = inflow + lake_precip
+
+        if outflow <= 0:
+            continue
+
+        # Trace downstream from pour point, adding outflow to each cell
+        r, c = pp_r, pp_c
+        visited = set()
+        while 0 <= r < H:
+            if (r, c) in visited:
+                break  # D8 cycle detected
+            visited.add((r, c))
+            accumulation[r, c] += outflow
+            dr = int(flow_dr[r, c])
+            dc = int(flow_dc[r, c])
+            if dr == 0 and dc == 0:
+                break
+            nr, nc = r + dr, (c + dc) % W
+            if nr < 0 or nr >= H:
+                break
+            if lake_mask[nr, nc]:
+                # Entering another lake — deposit flow there so the
+                # downstream lake picks it up when it's processed
+                accumulation[nr, nc] += outflow
+                break
+            r, c = nr, nc
+
+
 def generate_rivers(world: WorldData, params: WorldParams):
     """Generate river network using pit-filled D8 flow + valley carving.
+
+    Lakes are treated as collection basins: land rivers drain into them,
+    then total outflow is injected at the pour point and traced downstream.
+    Micro-noise is added to the filled surface to break grid-aligned
+    artifacts in flat regions.
 
     Two-pass approach:
     1. Fill pits -> compute flow on filled surface -> carve valleys
@@ -135,51 +249,78 @@ def generate_rivers(world: WorldData, params: WorldParams):
     lake_mask = world["lake_mask"] if "lake_mask" in world else np.zeros_like(land_mask)
     H, W = world.height, world.width
 
-    # For river routing, treat lakes as land (not ocean sinks).
-    # Pit-fill seeds from true ocean only; flow routes through flat
-    # lake surfaces to the pour point and out.
-    routing_mask = land_mask | lake_mask  # "not ocean" for pit-fill seeding
-
     # Preserve original elevation
     world["elevation_raw"] = world["elevation"].copy()
 
+    has_lakes = np.any(lake_mask)
+    rng = np.random.RandomState(params.seed + 800)
+
     # === PASS 1: pit fill + initial flow ===
-    filled = _priority_flood(elevation, routing_mask, H, W, params.pit_fill_epsilon)
+    # Lakes are sinks (part of ~land_mask): rivers drain into them
+    filled = _priority_flood(elevation, land_mask, H, W, params.pit_fill_epsilon)
+    # Micro-noise breaks grid-aligned artifacts in flat regions
+    filled += rng.uniform(0, params.pit_fill_epsilon * 0.1, (H, W))
+
     flow_dr, flow_dc = _compute_d8_flow(filled, H, W)
+
+    if has_lakes:
+        lake_labels, pour_points = _find_lake_pour_points(
+            lake_mask, land_mask, filled, H, W
+        )
+        _fix_pour_point_d8(pour_points, flow_dr, flow_dc, lake_mask, filled)
+
     accumulation = _accumulate_flow(
-        flow_dr, flow_dc, precipitation, routing_mask, filled, H, W
+        flow_dr, flow_dc, precipitation, land_mask, filled, H, W
     )
 
+    if has_lakes:
+        _inject_lake_outflow(
+            lake_labels, pour_points, accumulation,
+            flow_dr, flow_dc, lake_mask, precipitation, filled, H, W,
+        )
+
     # === Valley carving ===
-    # Use log of flow accumulation to carve valleys proportionally
     # Only carve land, not lake surfaces
     max_acc = accumulation.max()
     if max_acc > 0 and params.valley_carve_strength > 0:
         log_flow = np.log1p(accumulation / max_acc * 1000.0)
-        # Normalize to [0, 1]
         log_flow_norm = log_flow / max(log_flow.max(), 1e-10)
         carve_depth = params.valley_carve_strength * log_flow_norm * land_mask
-        # Smooth to create V-shaped valleys, not pixel-thin cuts
         carve_depth = gaussian_filter(carve_depth, sigma=2.0)
         elevation_carved = elevation - carve_depth
     else:
         elevation_carved = elevation
 
     # === PASS 2: recompute flow on carved surface ===
-    filled2 = _priority_flood(elevation_carved, routing_mask, H, W, params.pit_fill_epsilon)
+    filled2 = _priority_flood(elevation_carved, land_mask, H, W, params.pit_fill_epsilon)
+    filled2 += rng.uniform(0, params.pit_fill_epsilon * 0.1, (H, W))
+
     flow_dr2, flow_dc2 = _compute_d8_flow(filled2, H, W)
+
+    if has_lakes:
+        lake_labels2, pour_points2 = _find_lake_pour_points(
+            lake_mask, land_mask, filled2, H, W
+        )
+        _fix_pour_point_d8(pour_points2, flow_dr2, flow_dc2, lake_mask, filled2)
+
     accumulation2 = _accumulate_flow(
-        flow_dr2, flow_dc2, precipitation, routing_mask, filled2, H, W
+        flow_dr2, flow_dc2, precipitation, land_mask, filled2, H, W
     )
+
+    if has_lakes:
+        _inject_lake_outflow(
+            lake_labels2, pour_points2, accumulation2,
+            flow_dr2, flow_dc2, lake_mask, precipitation, filled2, H, W,
+        )
 
     # Store carved elevation
     world["elevation"] = elevation_carved.astype(np.float32)
 
-    # --- Identify major rivers ---
+    # --- Identify major rivers (land only, not lake surfaces) ---
     max_acc2 = accumulation2.max()
     if max_acc2 > 0:
         threshold = params.river_threshold * max_acc2
-        river_mask = (accumulation2 > threshold) & routing_mask
+        river_mask = (accumulation2 > threshold) & land_mask
     else:
         river_mask = np.zeros((H, W), dtype=bool)
 
