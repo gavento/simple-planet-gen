@@ -91,10 +91,22 @@ def main():
     )
 
     # Parameter overrides
-    parser.add_argument("--num-major-plates", type=int, default=None)
-    parser.add_argument("--num-minor-plates", type=int, default=None)
-    parser.add_argument("--land-fraction", type=float, default=None)
-    parser.add_argument("--sea-level", type=float, default=None)
+    parser.add_argument(
+        "--num-major-plates", type=int, default=None,
+        help="Number of major tectonic plates (default: 7)",
+    )
+    parser.add_argument(
+        "--num-minor-plates", type=int, default=None,
+        help="Number of minor tectonic plates (default: 20)",
+    )
+    parser.add_argument(
+        "--land-fraction", type=float, default=None,
+        help="Target land fraction 0-1 (default: 0.30)",
+    )
+    parser.add_argument(
+        "--sea-level", type=float, default=None,
+        help="Fixed sea level in meters; overrides --land-fraction",
+    )
 
     args = parser.parse_args()
 

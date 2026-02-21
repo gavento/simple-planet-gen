@@ -362,6 +362,40 @@ def plot_rivers(world: WorldData, ax=None, show_colorbar=True):
     _setup_ax(ax, "Rivers", world)
 
 
+def plot_rivers_land(world: WorldData, ax=None, show_colorbar=True):
+    """Plot rivers over land-only terrain."""
+    if ax is None:
+        _, ax = plt.subplots(1, 1, figsize=(16, 8))
+
+    # Background: land-only elevation
+    plot_terrain_carved(world, ax=ax, show_colorbar=show_colorbar)
+
+    flow = world["flow_accumulation"]
+    land_mask = world["land_mask"]
+
+    if flow.max() > 0:
+        land_flow = np.where(land_mask, flow, 0)
+        log_flow = np.log1p(land_flow)
+
+        land_log = log_flow[land_mask]
+        threshold = np.percentile(land_log, 85)
+
+        river_intensity = np.clip((log_flow - threshold) / (log_flow.max() - threshold), 0, 1)
+
+        overlay = np.zeros((*flow.shape, 4))
+        visible = river_intensity > 0.01
+        overlay[visible, 0] = 0.0
+        overlay[visible, 1] = 0.15
+        overlay[visible, 2] = 0.85
+        overlay[visible, 3] = np.clip(river_intensity[visible] ** 0.4 * 0.9, 0.1, 0.9)
+
+        ax.imshow(
+            overlay, extent=_extent(world), interpolation="nearest", origin="upper"
+        )
+
+    _setup_ax(ax, "Rivers (land)", world)
+
+
 def plot_biomes(world: WorldData, ax=None):
     """Plot biome classification."""
     if ax is None:
@@ -438,6 +472,7 @@ PLOT_FUNCTIONS = {
     "winds": plot_winds,
     "precipitation": plot_precipitation,
     "rivers": plot_rivers,
+    "rivers_land": plot_rivers_land,
     "terrain_carved": plot_terrain_carved,
     "biomes": plot_biomes,
 }
