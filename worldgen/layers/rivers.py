@@ -132,20 +132,27 @@ def generate_rivers(world: WorldData, params: WorldParams):
     elevation = world["elevation"].astype(np.float64)
     precipitation = world["precipitation"].astype(np.float64)
     land_mask = world["land_mask"]
+    lake_mask = world["lake_mask"] if "lake_mask" in world else np.zeros_like(land_mask)
     H, W = world.height, world.width
+
+    # For river routing, treat lakes as land (not ocean sinks).
+    # Pit-fill seeds from true ocean only; flow routes through flat
+    # lake surfaces to the pour point and out.
+    routing_mask = land_mask | lake_mask  # "not ocean" for pit-fill seeding
 
     # Preserve original elevation
     world["elevation_raw"] = world["elevation"].copy()
 
     # === PASS 1: pit fill + initial flow ===
-    filled = _priority_flood(elevation, land_mask, H, W, params.pit_fill_epsilon)
+    filled = _priority_flood(elevation, routing_mask, H, W, params.pit_fill_epsilon)
     flow_dr, flow_dc = _compute_d8_flow(filled, H, W)
     accumulation = _accumulate_flow(
-        flow_dr, flow_dc, precipitation, land_mask, filled, H, W
+        flow_dr, flow_dc, precipitation, routing_mask, filled, H, W
     )
 
     # === Valley carving ===
     # Use log of flow accumulation to carve valleys proportionally
+    # Only carve land, not lake surfaces
     max_acc = accumulation.max()
     if max_acc > 0 and params.valley_carve_strength > 0:
         log_flow = np.log1p(accumulation / max_acc * 1000.0)
@@ -159,10 +166,10 @@ def generate_rivers(world: WorldData, params: WorldParams):
         elevation_carved = elevation
 
     # === PASS 2: recompute flow on carved surface ===
-    filled2 = _priority_flood(elevation_carved, land_mask, H, W, params.pit_fill_epsilon)
+    filled2 = _priority_flood(elevation_carved, routing_mask, H, W, params.pit_fill_epsilon)
     flow_dr2, flow_dc2 = _compute_d8_flow(filled2, H, W)
     accumulation2 = _accumulate_flow(
-        flow_dr2, flow_dc2, precipitation, land_mask, filled2, H, W
+        flow_dr2, flow_dc2, precipitation, routing_mask, filled2, H, W
     )
 
     # Store carved elevation
@@ -172,7 +179,7 @@ def generate_rivers(world: WorldData, params: WorldParams):
     max_acc2 = accumulation2.max()
     if max_acc2 > 0:
         threshold = params.river_threshold * max_acc2
-        river_mask = (accumulation2 > threshold) & land_mask
+        river_mask = (accumulation2 > threshold) & routing_mask
     else:
         river_mask = np.zeros((H, W), dtype=bool)
 

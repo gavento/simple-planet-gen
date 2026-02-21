@@ -7,6 +7,7 @@ from pathlib import Path
 import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import numpy as np
+from scipy.ndimage import gaussian_filter
 
 from worldgen.layers.biomes import BIOME_COLORS, BIOME_NAMES
 from worldgen.world import WorldData
@@ -435,29 +436,51 @@ def _render_lake_overlay(world, ax):
 
 
 def _render_river_overlay(world, ax):
-    """Render river overlay on the current axes. Shared by river plots."""
+    """Render river overlay with flow-proportional width.
+
+    Uses multi-scale compositing: high-flow rivers are blurred wider,
+    low-flow rivers stay thin (1 pixel). Thickness is soft-scaled by
+    the global maximum flow.
+    """
     flow = world["flow_accumulation"]
     land_mask = world["land_mask"]
+    lake_mask = world["lake_mask"] if "lake_mask" in world else np.zeros_like(land_mask)
+    routing_mask = land_mask | lake_mask
 
-    if flow.max() > 0:
-        land_flow = np.where(land_mask, flow, 0)
-        log_flow = np.log1p(land_flow)
+    if flow.max() <= 0:
+        return
 
-        land_log = log_flow[land_mask]
-        threshold = np.percentile(land_log, 85)
+    # Show rivers on land only (not on lake surfaces — lakes render as clean water)
+    land_flow = np.where(land_mask, flow, 0)
+    log_flow = np.log1p(land_flow)
 
-        river_intensity = np.clip((log_flow - threshold) / (log_flow.max() - threshold), 0, 1)
+    land_log = log_flow[land_mask]
+    threshold = np.percentile(land_log, 85)
+    max_log = log_flow.max()
+    if max_log <= threshold:
+        return
 
-        overlay = np.zeros((*flow.shape, 4))
-        visible = river_intensity > 0.01
-        overlay[visible, 0] = 0.0
-        overlay[visible, 1] = 0.15
-        overlay[visible, 2] = 0.85
-        overlay[visible, 3] = np.clip(river_intensity[visible] ** 0.4 * 0.9, 0.1, 0.9)
+    river_intensity = np.clip((log_flow - threshold) / (max_log - threshold), 0, 1)
 
-        ax.imshow(
-            overlay, extent=_extent(world), interpolation="nearest", origin="upper"
-        )
+    # Multi-scale width: blur intensity at increasing sigma.
+    # High-flow rivers survive wider blurs → appear thicker.
+    narrow = river_intensity
+    medium = gaussian_filter(river_intensity, sigma=1.5)
+    wide = gaussian_filter(river_intensity, sigma=3.0)
+
+    # Composite: take the max across scales, each attenuated
+    composite = np.maximum(np.maximum(wide * 0.5, medium * 0.7), narrow)
+
+    overlay = np.zeros((*flow.shape, 4))
+    visible = composite > 0.01
+    overlay[visible, 0] = 0.0
+    overlay[visible, 1] = 0.15
+    overlay[visible, 2] = 0.85
+    overlay[visible, 3] = np.clip(composite[visible] ** 0.5 * 0.85, 0.05, 0.85)
+
+    ax.imshow(
+        overlay, extent=_extent(world), interpolation="nearest", origin="upper"
+    )
 
 
 def plot_rivers(world: WorldData, ax=None, cbar_ax=None, **_kw):
@@ -581,6 +604,7 @@ def plot_biomes_terrain(world: WorldData, ax=None, cbar_ax=None, **_kw):
         ncol=2,
         framealpha=0.8,
     )
+    _render_river_overlay(world, ax)
     _setup_ax(ax, "Biomes + Terrain", world)
 
 

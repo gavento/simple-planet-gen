@@ -114,8 +114,8 @@ def generate_lakes(world: WorldData, params: WorldParams):
             continue
 
         _, _, pour_elev = pp
-        # Set lake surface to pour-point elevation
-        elevation[water] = pour_elev
+        # Lake surface sits slightly below pour point (water level < outlet)
+        elevation[water] = pour_elev - 1.0
         lake_mask[water] = True
         n_converted += 1
 
