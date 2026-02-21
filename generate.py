@@ -2,7 +2,7 @@
 """World map generator - CLI entry point.
 
 Usage:
-    # Full pipeline at development resolution
+    # Full pipeline at development resolution (random seed)
     python generate.py
 
     # Custom resolution and seed
@@ -12,20 +12,23 @@ Usage:
     python generate.py --up-to elevation
 
     # Add a layer to an existing world file
-    python generate.py --input world.npz --layer precipitation
+    python generate.py --input output/world_data.npz --layer precipitation
 
     # Plot from an existing world file
-    python generate.py --input world.npz --plot elevation
-    python generate.py --input world.npz --plot-all
+    python generate.py --input output/world_data.npz --plot elevation
+    python generate.py --input output/world_data.npz --plot-all
 
     # Full pipeline with plots
     python generate.py --resolution 1000 --seed 42 --plot-all
+
+    # Custom output directory
+    python generate.py --output-dir maps/ --plot-all
 """
 
 from __future__ import annotations
 
 import argparse
-import sys
+import random
 import time
 from pathlib import Path
 
@@ -47,9 +50,13 @@ def main():
     parser.add_argument(
         "--resolution", type=int, default=1000, help="Grid width (default: 1000)"
     )
-    parser.add_argument("--seed", type=int, default=42, help="Random seed (default: 42)")
     parser.add_argument(
-        "--output", type=str, default="world.npz", help="Output file (default: world.npz)"
+        "--seed", type=int, default=None,
+        help="Random seed (default: random)",
+    )
+    parser.add_argument(
+        "--output", type=str, default=None,
+        help="Output .npz file path (default: <output-dir>/world_data.npz)",
     )
 
     # Pipeline control
@@ -71,7 +78,11 @@ def main():
         help="Run pipeline up to this layer (inclusive)",
     )
 
-    # Plotting
+    # Output / plotting
+    parser.add_argument(
+        "--output-dir", type=str, default="output",
+        help="Directory for all output files and plots (default: output)",
+    )
     parser.add_argument(
         "--plot",
         type=str,
@@ -81,9 +92,6 @@ def main():
     )
     parser.add_argument(
         "--plot-all", action="store_true", help="Generate all plots"
-    )
-    parser.add_argument(
-        "--plot-dir", type=str, default="output", help="Directory for plots"
     )
     parser.add_argument(
         "--dpi", type=int, default=None,
@@ -110,13 +118,23 @@ def main():
 
     args = parser.parse_args()
 
+    # Resolve seed
+    seed = args.seed if args.seed is not None else random.randint(0, 2**31 - 1)
+
+    # Resolve output path: --output wins, otherwise <output-dir>/world_data.npz
+    output_dir = Path(args.output_dir)
+    if args.output is not None:
+        output_path = Path(args.output)
+    else:
+        output_path = output_dir / "world_data.npz"
+
     # --- Load or create world ---
     if args.input:
         print(f"Loading world from {args.input}...")
         world = WorldData.load(args.input)
         params = world.params
     else:
-        params = WorldParams(resolution=args.resolution, seed=args.seed)
+        params = WorldParams(resolution=args.resolution, seed=seed)
         # Apply overrides
         if args.num_major_plates is not None:
             params.num_major_plates = args.num_major_plates
@@ -146,23 +164,21 @@ def main():
 
     # --- Save ---
     if args.layer or (not args.plot and not args.plot_all) or not args.input:
-        world.save(args.output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        world.save(output_path)
 
     # --- Plot ---
-    # Resolve DPI: auto-scale so plot area covers data at ~2px per cell
-    # With figsize=16 and ~75% used for plot area, effective plot width = 12in
-    # For 2px/cell: dpi = resolution * 2 / 12
     dpi = args.dpi if args.dpi else max(150, round(params.resolution / 6))
 
     if args.plot_all:
         print(f"Generating all plots (dpi={dpi})...")
-        plot_all(world, output_dir=args.plot_dir, dpi=dpi)
+        plot_all(world, output_dir=output_dir, dpi=dpi)
     elif args.plot:
         print(f"Plotting {args.plot} (dpi={dpi})...")
         fig, ax = plt.subplots(1, 1, figsize=(16, 8))
         plot_layer(world, args.plot, ax=ax)
-        out_path = Path(args.plot_dir) / f"{args.plot}.png"
-        out_path.parent.mkdir(parents=True, exist_ok=True)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        out_path = output_dir / f"{args.plot}.png"
         fig.savefig(out_path, dpi=dpi, bbox_inches="tight")
         plt.close(fig)
         print(f"  Saved {out_path}")
