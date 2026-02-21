@@ -119,10 +119,11 @@ LAND_CMAP = _make_land_cmap()
 
 
 def plot_elevation_land(world: WorldData, ax=None, show_colorbar=True):
-    """Plot elevation for land only, with uniform ocean color."""
+    """Plot pre-carve elevation for land only, with uniform ocean color."""
     if ax is None:
         _, ax = plt.subplots(1, 1, figsize=(16, 8))
-    elevation = world["elevation"]
+    # Use raw (pre-river-carve) elevation if available
+    elevation = world["elevation_raw"] if "elevation_raw" in world else world["elevation"]
     land_mask = world["land_mask"]
 
     ax.set_facecolor("#2266aa")
@@ -139,6 +140,36 @@ def plot_elevation_land(world: WorldData, ax=None, show_colorbar=True):
     if show_colorbar:
         plt.colorbar(im, ax=ax, label="Elevation (m)", shrink=0.7)
     _setup_ax(ax, "Land Elevation", world)
+    return im
+
+
+def plot_terrain_carved(world: WorldData, ax=None, show_colorbar=True):
+    """Plot post-river carved terrain (land only).
+
+    Shows the elevation after valley carving by rivers.
+    Compare with elevation_land (pre-carve) to see river erosion.
+    """
+    if ax is None:
+        _, ax = plt.subplots(1, 1, figsize=(16, 8))
+    # elevation is the carved version (rivers.py overwrites it)
+    # elevation_raw is the pre-carve version
+    elevation = world["elevation"]
+    land_mask = world["land_mask"]
+
+    ax.set_facecolor("#2266aa")
+    display = np.ma.masked_where(~land_mask, elevation)
+    im = ax.imshow(
+        display,
+        extent=_extent(world),
+        cmap=LAND_CMAP,
+        vmin=0,
+        vmax=8000,
+        interpolation="nearest",
+        origin="upper",
+    )
+    if show_colorbar:
+        plt.colorbar(im, ax=ax, label="Elevation (m)", shrink=0.7)
+    _setup_ax(ax, "Terrain (post-river carving)", world)
     return im
 
 
@@ -294,8 +325,6 @@ def plot_precipitation(world: WorldData, ax=None, show_colorbar=True):
 
 def plot_rivers(world: WorldData, ax=None, show_colorbar=True):
     """Plot rivers over terrain using continuous flow accumulation."""
-    from scipy.ndimage import maximum_filter
-
     if ax is None:
         _, ax = plt.subplots(1, 1, figsize=(16, 8))
 
@@ -310,29 +339,24 @@ def plot_rivers(world: WorldData, ax=None, show_colorbar=True):
         land_flow = np.where(land_mask, flow, 0)
         log_flow = np.log1p(land_flow)
 
-        # Find a good threshold: show top ~20% of land cells by flow
+        # Find a good threshold: show top ~15% of land cells by flow
         land_log = log_flow[land_mask]
-        threshold = np.percentile(land_log, 80)
+        threshold = np.percentile(land_log, 85)
 
         # Subtract threshold so only significant flows show
         river_intensity = np.clip((log_flow - threshold) / (log_flow.max() - threshold), 0, 1)
 
-        # Dilate to make rivers visible at plot scale
-        # Adaptive dilation based on map size
-        dilation = max(3, world.width // 250)
-        river_display = maximum_filter(river_intensity, size=dilation)
-
-        # Create RGBA overlay: blue rivers with flow-proportional alpha
+        # Create RGBA overlay: blue rivers with flow-proportional alpha (no dilation)
         overlay = np.zeros((*flow.shape, 4))
-        visible = river_display > 0.01
+        visible = river_intensity > 0.01
         overlay[visible, 0] = 0.0
         overlay[visible, 1] = 0.15
         overlay[visible, 2] = 0.85
         # Non-linear alpha: faint tributaries, bold main rivers
-        overlay[visible, 3] = np.clip(river_display[visible] ** 0.35 * 0.95, 0.15, 0.95)
+        overlay[visible, 3] = np.clip(river_intensity[visible] ** 0.4 * 0.9, 0.1, 0.9)
 
         ax.imshow(
-            overlay, extent=_extent(world), interpolation="bilinear", origin="upper"
+            overlay, extent=_extent(world), interpolation="nearest", origin="upper"
         )
 
     _setup_ax(ax, "Rivers", world)
@@ -414,6 +438,7 @@ PLOT_FUNCTIONS = {
     "winds": plot_winds,
     "precipitation": plot_precipitation,
     "rivers": plot_rivers,
+    "terrain_carved": plot_terrain_carved,
     "biomes": plot_biomes,
 }
 
