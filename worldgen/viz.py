@@ -92,6 +92,32 @@ def plot_elevation(world: WorldData, ax=None, show_colorbar=True):
     return im
 
 
+def _make_land_cmap():
+    """Colormap for land-only elevation: 0m to 8000m."""
+    levels = [
+        (0, "#8ec7a6"),
+        (100, "#5baa5e"),
+        (500, "#3d8b3d"),
+        (1000, "#a0a040"),
+        (2000, "#c0a030"),
+        (3000, "#b08060"),
+        (4500, "#a07050"),
+        (6000, "#e0d0c0"),
+        (8000, "#ffffff"),
+    ]
+    hi = levels[-1][0]
+    norm_levels = [v / hi for v, _ in levels]
+    colors = [c for _, c in levels]
+    cmap = mcolors.LinearSegmentedColormap.from_list(
+        "land_elev", list(zip(norm_levels, colors))
+    )
+    cmap.set_bad(alpha=0)
+    return cmap
+
+
+LAND_CMAP = _make_land_cmap()
+
+
 def plot_elevation_land(world: WorldData, ax=None, show_colorbar=True):
     """Plot elevation for land only, with uniform ocean color."""
     if ax is None:
@@ -99,17 +125,15 @@ def plot_elevation_land(world: WorldData, ax=None, show_colorbar=True):
     elevation = world["elevation"]
     land_mask = world["land_mask"]
 
-    # Show land elevation only; mask ocean
-    display = np.where(land_mask, elevation, np.nan)
-    # Uniform ocean background
     ax.set_facecolor("#2266aa")
+    display = np.ma.masked_where(~land_mask, elevation)
     im = ax.imshow(
         display,
         extent=_extent(world),
-        cmap=TERRAIN_CMAP,
+        cmap=LAND_CMAP,
         vmin=0,
-        vmax=TERRAIN_VMAX,
-        interpolation="bilinear",
+        vmax=8000,
+        interpolation="nearest",
         origin="upper",
     )
     if show_colorbar:
@@ -125,15 +149,17 @@ def plot_temperature_land(world: WorldData, ax=None, show_colorbar=True):
     temp = world["temperature"]
     land_mask = world["land_mask"]
 
-    display = np.where(land_mask, temp, np.nan)
     ax.set_facecolor("#2266aa")
+    display = np.ma.masked_where(~land_mask, temp)
+    cmap = plt.get_cmap("RdBu_r").copy()
+    cmap.set_bad(alpha=0)
     im = ax.imshow(
         display,
         extent=_extent(world),
-        cmap="RdBu_r",
+        cmap=cmap,
         vmin=-40,
         vmax=35,
-        interpolation="bilinear",
+        interpolation="nearest",
         origin="upper",
     )
     if show_colorbar:
