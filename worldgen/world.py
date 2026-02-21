@@ -70,6 +70,11 @@ class WorldParams:
     continentality_strength: float = 0.25  # amplification of temp departure inland
     coast_moderation_strength: float = 0.4  # how strongly coast temps follow ocean
 
+    # Lakes
+    min_lake_cells: int = 4  # minimum pixel count to keep a lake (smaller → removed)
+    glacial_carve_strength: float = 30.0  # meters, glacial valley deepening
+    glacial_lake_depth: float = 15.0  # meters, max glacial depression depth
+
     # Rivers
     river_threshold: float = 0.02  # fraction of max accumulation to show
     pit_fill_epsilon: float = 0.01  # meters, minimum slope in filled terrain

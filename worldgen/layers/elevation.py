@@ -50,7 +50,17 @@ def generate_elevation(world: WorldData, params: WorldParams):
         warp_strength=0.4, warp_octaves=2,
         seed=params.seed + 280,
     )
-    continental_smooth += 0.35 * continent_shape
+    # Asymmetric damping: suppress noise that opposes the dominant character.
+    # Deep continental interiors resist negative noise (no inland seas).
+    # Deep ocean resists positive noise (no random ocean plateaus).
+    # Margins get full noise → organic coastline reshaping.
+    interior_strength = np.clip(continental_smooth * 2 - 0.5, 0, 1)
+    ocean_strength = np.clip(1.5 - continental_smooth * 2, 0, 1)
+    damping = np.ones_like(continent_shape)
+    damping -= interior_strength * 0.85 * (continent_shape < 0).astype(float)
+    damping -= ocean_strength * 0.85 * (continent_shape > 0).astype(float)
+
+    continental_smooth += 0.35 * continent_shape * damping
     continental_smooth = np.clip(continental_smooth, 0, 1)
 
     # --- Coastline breakup ---

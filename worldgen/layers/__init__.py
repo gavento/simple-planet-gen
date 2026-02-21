@@ -10,6 +10,7 @@ if TYPE_CHECKING:
 from worldgen.layers.biomes import generate_biomes
 from worldgen.layers.circulation import generate_circulation
 from worldgen.layers.elevation import generate_elevation
+from worldgen.layers.lakes import generate_lakes
 from worldgen.layers.land_mask import generate_land_mask
 from worldgen.layers.ocean_currents import generate_ocean_currents
 from worldgen.layers.precipitation import generate_precipitation
@@ -22,6 +23,7 @@ PIPELINE = [
     ("tectonics", generate_tectonics, []),
     ("elevation", generate_elevation, ["tectonics"]),
     ("land_mask", generate_land_mask, ["elevation"]),
+    ("lakes", generate_lakes, ["elevation", "land_mask"]),
     ("circulation", generate_circulation, ["land_mask", "elevation"]),
     ("ocean_currents", generate_ocean_currents, ["circulation", "land_mask"]),
     ("temperature", generate_temperature, ["elevation", "land_mask", "ocean_currents"]),
@@ -35,6 +37,7 @@ LAYER_PRIMARY_KEY = {
     "tectonics": "plate_ids",
     "elevation": "elevation",
     "land_mask": "land_mask",
+    "lakes": "lake_mask",
     "circulation": "wind_u",
     "ocean_currents": "sst_anomaly",
     "temperature": "temperature",

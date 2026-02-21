@@ -125,7 +125,11 @@ def _setup_ax(ax, title: str, world: WorldData):
 
 
 def _hillshade(elevation, azimuth=315, altitude=45):
-    """Compute hillshade from elevation array. Returns values in [0, 1]."""
+    """Compute hillshade from elevation array. Returns values in [0, 1].
+
+    Shading is attenuated on gentle slopes so flat plains stay clean
+    while steep mountain terrain gets full relief.
+    """
     from scipy.ndimage import sobel
     dx = sobel(elevation.astype(np.float64), axis=1)
     dy = sobel(elevation.astype(np.float64), axis=0)
@@ -140,6 +144,14 @@ def _hillshade(elevation, azimuth=315, altitude=45):
     # Stretch contrast
     lo, hi = np.percentile(shade, [2, 98])
     shade = np.clip((shade - lo) / (hi - lo + 1e-10), 0, 1)
+
+    # Attenuate shading on gentle slopes — emphasize mountains
+    slope_mag = np.sqrt(dx**2 + dy**2)
+    slope_norm = slope_mag / (np.percentile(slope_mag, 98) + 1e-10)
+    slope_norm = np.clip(slope_norm, 0, 1)
+    # Flat terrain → shade pushed toward neutral (0.5)
+    # Steep terrain → full shade range preserved
+    shade = 0.5 + (shade - 0.5) * np.clip(slope_norm ** 0.5, 0.05, 1.0)
     return shade
 
 
@@ -184,6 +196,7 @@ def plot_elevation_land(world: WorldData, ax=None, cbar_ax=None, **_kw):
         interpolation="nearest",
         origin="upper",
     )
+    _render_lake_overlay(world, ax)
     _colorbar(im, cbar_ax, "Elevation (m)")
     _setup_ax(ax, "Land Elevation", world)
     return im
@@ -207,6 +220,7 @@ def plot_terrain_carved(world: WorldData, ax=None, cbar_ax=None, **_kw):
         interpolation="nearest",
         origin="upper",
     )
+    _render_lake_overlay(world, ax)
     _colorbar(im, cbar_ax, "Elevation (m)")
     _setup_ax(ax, "Terrain (post-river carving)", world)
     return im
@@ -299,21 +313,34 @@ def plot_plates(world: WorldData, ax=None, cbar_ax=None, **_kw):
 
 
 def plot_land_mask(world: WorldData, ax=None, cbar_ax=None, **_kw):
-    """Plot land/ocean mask."""
+    """Plot land/ocean/lake mask."""
     if ax is None:
         _, ax = plt.subplots(1, 1, figsize=(16, 8))
     _hide_cbar(cbar_ax)
     land_mask = world["land_mask"]
-    cmap = mcolors.ListedColormap(["#2266aa", "#55aa55"])
+    lake_mask = world["lake_mask"] if "lake_mask" in world else np.zeros_like(land_mask)
+
+    # 0=ocean, 1=land, 2=lake
+    display = np.zeros_like(land_mask, dtype=int)
+    display[land_mask] = 1
+    display[lake_mask] = 2
+    cmap = mcolors.ListedColormap(["#2266aa", "#55aa55", LAKE_COLOR])
     im = ax.imshow(
-        land_mask.astype(int),
+        display,
         extent=_extent(world),
         cmap=cmap,
+        vmin=-0.5,
+        vmax=2.5,
         interpolation="nearest",
         origin="upper",
     )
     frac = world.metadata.get("land_fraction", 0)
-    _setup_ax(ax, f"Land/Ocean Mask (land: {frac:.1%})", world)
+    n_lakes = world.metadata.get("n_lakes", 0)
+    title = f"Land/Ocean Mask (land: {frac:.1%}"
+    if n_lakes > 0:
+        title += f", {n_lakes} lakes"
+    title += ")"
+    _setup_ax(ax, title, world)
     return im
 
 
@@ -389,6 +416,24 @@ def plot_precipitation(world: WorldData, ax=None, cbar_ax=None, **_kw):
     return im
 
 
+LAKE_COLOR = "#4a90b8"
+
+
+def _render_lake_overlay(world, ax):
+    """Render lake cells as a distinct lighter blue. Shared by land/biome plots."""
+    if "lake_mask" not in world:
+        return
+    lake_mask = world["lake_mask"]
+    if not np.any(lake_mask):
+        return
+    lake_rgba = np.zeros((*lake_mask.shape, 4))
+    r, g, b = mcolors.to_rgb(LAKE_COLOR)
+    lake_rgba[lake_mask] = [r, g, b, 1.0]
+    ax.imshow(
+        lake_rgba, extent=_extent(world), interpolation="nearest", origin="upper"
+    )
+
+
 def _render_river_overlay(world, ax):
     """Render river overlay on the current axes. Shared by river plots."""
     flow = world["flow_accumulation"]
@@ -427,11 +472,11 @@ def plot_rivers(world: WorldData, ax=None, cbar_ax=None, **_kw):
 
 
 def plot_rivers_land(world: WorldData, ax=None, cbar_ax=None, **_kw):
-    """Plot rivers over land-only terrain."""
+    """Plot rivers over land-only terrain with lakes."""
     if ax is None:
         _, ax = plt.subplots(1, 1, figsize=(16, 8))
 
-    # Background: land-only elevation (with colorbar)
+    # Background: land-only elevation (with colorbar, includes lake overlay)
     plot_terrain_carved(world, ax=ax, cbar_ax=cbar_ax)
     _render_river_overlay(world, ax)
     _setup_ax(ax, "Rivers (land)", world)
@@ -453,6 +498,7 @@ def plot_biomes(world: WorldData, ax=None, cbar_ax=None, **_kw):
         interpolation="nearest",
         origin="upper",
     )
+    _render_lake_overlay(world, ax)
 
     # Legend
     unique_biomes = np.unique(biome_id)
@@ -504,10 +550,15 @@ def plot_biomes_terrain(world: WorldData, ax=None, cbar_ax=None, **_kw):
             biome_rgba[:, :, c],
         )
 
-    # Uniform ocean
+    # Uniform ocean; lakes get distinct color
     ax.set_facecolor("#2266aa")
-    # Make ocean transparent in the RGBA image
-    biome_rgba[~land_mask, 3] = 0.0
+    lake_mask = world["lake_mask"] if "lake_mask" in world else np.zeros_like(land_mask)
+    ocean_mask = ~land_mask & ~lake_mask
+    biome_rgba[ocean_mask, 3] = 0.0  # transparent ocean → shows facecolor
+    # Lakes: render as lake color with hillshade
+    r, g, b = mcolors.to_rgb(LAKE_COLOR)
+    biome_rgba[lake_mask, :3] = [r, g, b]
+    biome_rgba[lake_mask, 3] = 1.0
 
     ax.imshow(
         biome_rgba,
@@ -539,9 +590,11 @@ def plot_ocean_currents(world: WorldData, ax=None, cbar_ax=None, **_kw):
         _, ax = plt.subplots(1, 1, figsize=(16, 8))
     sst = world["sst_anomaly"]
     land_mask = world["land_mask"]
+    lake_mask = world["lake_mask"] if "lake_mask" in world else np.zeros_like(land_mask)
+    not_ocean = land_mask | lake_mask
 
-    # Show SST anomaly over ocean, grey out land
-    display = np.where(land_mask, np.nan, sst)
+    # Show SST anomaly over ocean, grey out land and lakes
+    display = np.where(not_ocean, np.nan, sst)
     im = ax.imshow(
         display,
         extent=_extent(world),
@@ -551,9 +604,10 @@ def plot_ocean_currents(world: WorldData, ax=None, cbar_ax=None, **_kw):
         interpolation="bilinear",
         origin="upper",
     )
-    # Grey land overlay
+    # Grey land+lake overlay
     land_overlay = np.full((*land_mask.shape, 4), 0.0)
     land_overlay[land_mask] = [0.5, 0.5, 0.5, 0.8]
+    land_overlay[lake_mask] = [0.5, 0.5, 0.5, 0.8]
     ax.imshow(land_overlay, extent=_extent(world), interpolation="nearest", origin="upper")
 
     _colorbar(im, cbar_ax, "SST Anomaly (°C)")

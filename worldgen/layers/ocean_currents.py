@@ -22,9 +22,10 @@ def generate_ocean_currents(world: WorldData, params: WorldParams):
         sst_anomaly: (H, W) float32 - SST anomaly in degrees C
     """
     land_mask = world["land_mask"]
+    lake_mask = world["lake_mask"] if "lake_mask" in world else np.zeros_like(land_mask)
     H, W = world.height, world.width
     abs_lat = np.abs(world.lat_grid)
-    ocean_mask = ~land_mask
+    ocean_mask = ~land_mask & ~lake_mask
 
     # Smooth land mask for coast detection (avoid pixel-scale noise)
     land_smooth = gaussian_filter(land_mask.astype(np.float64), sigma=max(3, W // 200))
