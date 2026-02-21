@@ -107,15 +107,21 @@ def generate_lakes(world: WorldData, params: WorldParams):
             n_removed += 1
             continue
 
-        # Find pour point
-        pp = _find_pour_point(water, elevation, land_mask, H, W)
-        if pp is None:
-            # No land rim (shouldn't happen for inland water, but safety)
+        # Find lake level from rim elevation profile.
+        # Using the minimum rim cell would cluster all inland seas near sea
+        # level. Instead, use a low percentile of rim elevations — this models
+        # natural damming (sediment, moraines) at the narrowest outlet and
+        # gives each lake a surface tied to its surrounding terrain.
+        padded = np.pad(water, ((0, 0), (1, 1)), mode="wrap")
+        dilated = binary_dilation(padded, structure=np.ones((3, 3)))[:, 1:-1]
+        rim = dilated & ~water & land_mask
+        rim_r, rim_c = np.where(rim)
+        if len(rim_r) == 0:
             continue
 
-        _, _, pour_elev = pp
-        # Lake surface sits slightly below pour point (water level < outlet)
-        elevation[water] = pour_elev - 1.0
+        rim_elevs = elevation[rim_r, rim_c]
+        lake_level = float(np.percentile(rim_elevs, 20))
+        elevation[water] = lake_level - 1.0
         lake_mask[water] = True
         n_converted += 1
 

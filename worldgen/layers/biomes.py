@@ -9,18 +9,18 @@ from worldgen.world import WorldData, WorldParams
 # Biome definitions: (id, name, color)
 BIOME_DEFS = {
     0: ("Ocean", "#1a5276"),
-    1: ("Ice/Glacier", "#d5e8f0"),
-    2: ("Tundra", "#a3c1d0"),
-    3: ("Boreal Forest", "#2d5a3d"),
-    4: ("Temperate Rainforest", "#1e6b3a"),
-    5: ("Temperate Forest", "#4a8c5c"),
-    6: ("Temperate Grassland", "#b8cc6e"),
-    7: ("Mediterranean Shrub", "#c8a860"),
-    8: ("Subtropical Forest", "#3d8b4f"),
-    9: ("Tropical Rainforest", "#1b5e32"),
-    10: ("Tropical Savanna", "#c4b648"),
-    11: ("Hot Desert", "#e8d5a3"),
-    12: ("Cold Desert/Steppe", "#c4b89a"),
+    1: ("Ice/Glacier", "#cde0ec"),
+    2: ("Tundra", "#96b3c2"),
+    3: ("Boreal Forest", "#5d7e66"),
+    4: ("Temperate Rainforest", "#6b8e9c"),
+    5: ("Temperate Forest", "#6b9c70"),
+    6: ("Temperate Grassland", "#a4b56c"),
+    7: ("Mediterranean Shrub", "#c0a262"),
+    8: ("Subtropical Forest", "#6a9e5a"),
+    9: ("Tropical Rainforest", "#8070a0"),
+    10: ("Tropical Savanna", "#c0ac50"),
+    11: ("Hot Desert", "#d2c08c"),
+    12: ("Cold Desert/Steppe", "#b5a888"),
 }
 
 BIOME_NAMES = {k: v[0] for k, v in BIOME_DEFS.items()}

@@ -418,7 +418,7 @@ def plot_precipitation(world: WorldData, ax=None, cbar_ax=None, **_kw):
     return im
 
 
-LAKE_COLOR = "#4a90b8"
+LAKE_COLOR = "#3a7a9e"
 
 
 def _render_lake_overlay(world, ax):
