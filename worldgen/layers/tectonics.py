@@ -126,7 +126,7 @@ def generate_tectonics(world: WorldData, params: WorldParams):
 
     # Minor plates: half near boundaries (microplates), half random (medium plates)
     if n_minor > 0:
-        n_micro = n_minor // 2
+        n_micro = n_minor * 2 // 3
         n_medium = n_minor - n_micro
 
         parts_x, parts_y, parts_z = [mx], [my], [mz]
@@ -154,8 +154,19 @@ def generate_tectonics(world: WorldData, params: WorldParams):
     else:
         cx, cy, cz = mx, my, mz
 
-    # Plate motion vectors
+    # Plate motion vectors (with neighbor correlation)
     vx, vy, vz = _random_tangent_vectors(cx, cy, cz, rng)
+
+    # Relax velocities so adjacent plates move in similar directions
+    vel_tree = cKDTree(np.column_stack([cx, cy, cz]))
+    for _ in range(2):
+        _, nb_idx = vel_tree.query(np.column_stack([cx, cy, cz]), k=min(4, num_plates))
+        nb_vx = vx[nb_idx[:, 1:]].mean(axis=1)
+        nb_vy = vy[nb_idx[:, 1:]].mean(axis=1)
+        nb_vz = vz[nb_idx[:, 1:]].mean(axis=1)
+        vx = 0.7 * vx + 0.3 * nb_vx
+        vy = 0.7 * vy + 0.3 * nb_vy
+        vz = 0.7 * vz + 0.3 * nb_vz
 
     # --- Classify plates ---
     # Continental plates are more likely to be major plates
@@ -297,6 +308,8 @@ def generate_tectonics(world: WorldData, params: WorldParams):
     world["plate_base_offsets"] = plate_base_offsets
     world["boundary_distance"] = boundary_distance.astype(np.float32)
     world["boundary_convergence"] = boundary_convergence
+    world["plate_centers"] = centers.astype(np.float32)
+    world["plate_velocities"] = np.column_stack([vx, vy, vz]).astype(np.float32)
     world.metadata["num_plates"] = num_plates
     world.metadata["num_major_plates"] = n_major
     world.metadata["num_minor_plates"] = n_minor

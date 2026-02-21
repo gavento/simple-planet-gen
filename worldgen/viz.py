@@ -200,7 +200,7 @@ def plot_temperature_land(world: WorldData, ax=None, show_colorbar=True):
 
 
 def plot_plates(world: WorldData, ax=None):
-    """Plot tectonic plates with boundaries."""
+    """Plot tectonic plates with boundaries and motion vectors."""
     if ax is None:
         _, ax = plt.subplots(1, 1, figsize=(16, 8))
     plate_ids = world["plate_ids"]
@@ -227,6 +227,37 @@ def plot_plates(world: WorldData, ax=None):
     overlay[conv_boundary] = [1, 0, 0, 0.7]  # red
     overlay[div_boundary] = [0, 0.3, 1, 0.7]  # blue
     ax.imshow(overlay, extent=_extent(world), interpolation="nearest", origin="upper")
+
+    # Overlay plate motion vectors
+    if "plate_centers" in world and "plate_velocities" in world:
+        centers = world["plate_centers"]
+        vels = world["plate_velocities"]
+        for i in range(len(centers)):
+            px, py, pz = centers[i]
+            # Convert 3D center to lat/lon
+            lat_c = np.degrees(np.arcsin(np.clip(pz, -1, 1)))
+            lon_c = np.degrees(np.arctan2(py, px))
+            # Project 3D velocity to local east/north at this point
+            # East unit vector: (-sin(lon), cos(lon), 0)
+            # North unit vector: (-sin(lat)*cos(lon), -sin(lat)*sin(lon), cos(lat))
+            lat_r = np.radians(lat_c)
+            lon_r = np.radians(lon_c)
+            east = np.array([-np.sin(lon_r), np.cos(lon_r), 0.0])
+            north = np.array([
+                -np.sin(lat_r) * np.cos(lon_r),
+                -np.sin(lat_r) * np.sin(lon_r),
+                np.cos(lat_r),
+            ])
+            vel_3d = vels[i]
+            u = np.dot(vel_3d, east)   # eastward component
+            v = np.dot(vel_3d, north)  # northward component
+            ax.quiver(
+                lon_c, lat_c, u, v,
+                color="white", scale=5, width=0.005,
+                headwidth=3, headlength=4,
+                edgecolor="black", linewidth=0.5,
+                zorder=10,
+            )
 
     _setup_ax(ax, "Tectonic Plates (red=convergent, blue=divergent)", world)
     return im
