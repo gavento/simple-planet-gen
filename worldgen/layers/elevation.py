@@ -41,6 +41,18 @@ def generate_elevation(world: WorldData, params: WorldParams):
     shelf_sigma = max(5, W // 60)
     continental_smooth = gaussian_filter(is_continental, sigma=shelf_sigma)
 
+    # --- Large-scale continent shaping ---
+    # Low-frequency noise that reshapes entire continent outlines,
+    # creating organic coastlines independent of plate polygon shapes.
+    continent_shape = spherical_fbm_warped(
+        sx, sy, sz,
+        frequency=2.0, octaves=3, persistence=0.5,
+        warp_strength=0.4, warp_octaves=2,
+        seed=params.seed + 280,
+    )
+    continental_smooth += 0.35 * continent_shape
+    continental_smooth = np.clip(continental_smooth, 0, 1)
+
     # --- Coastline breakup ---
     # Apply strong noise at continental margins to create peninsulas,
     # bays, archipelagos, irregular shorelines.
@@ -57,7 +69,7 @@ def generate_elevation(world: WorldData, params: WorldParams):
         frequency=12.0, octaves=3, persistence=0.5,
         seed=params.seed + 310,
     )
-    margin_noise = 0.7 * margin_noise_large + 0.3 * margin_noise_small
+    margin_noise = 0.8 * margin_noise_large + 0.2 * margin_noise_small
 
     # Apply most strongly at margins (where continental_smooth is transitional)
     # Bell curve centered at 0.5 (the coastline)
@@ -68,7 +80,10 @@ def generate_elevation(world: WorldData, params: WorldParams):
     continental_warped = continental_smooth + 0.35 * margin_noise * (margin_strength + 0.3 * shelf_strength)
     continental_warped = np.clip(continental_warped, 0, 1)
 
-    # Sharpen slightly to make coastlines more defined
+    # Push toward bimodal: smoothstep concentrates values at 0 and 1,
+    # reducing cells at the threshold → fewer stray islands
+    continental_warped = 3 * continental_warped**2 - 2 * continental_warped**3
+    # Sharpen to make coastlines more defined
     continental_warped = np.clip((continental_warped - 0.35) / 0.30, 0, 1)
     # Smooth just slightly to remove pixelation
     continental_warped = gaussian_filter(continental_warped, sigma=1.5)
