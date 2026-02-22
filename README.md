@@ -1,4 +1,4 @@
-# worldgen
+# Simple Planet Generator
 
 A simple toy procedural world map generator. Produces Earth-like maps with tectonic plates, elevation, climate, rivers, lakes, and biomes — not physically accurate, but visually plausible. Modular: steps and layers can be computed and tweaked independently - intended as an experiment as well as a sandbox. Written with Claude Opus 4.6.
 
