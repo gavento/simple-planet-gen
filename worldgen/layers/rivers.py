@@ -224,6 +224,34 @@ def _inject_lake_outflow(
             r, c = nr, nc
 
 
+def _enforce_max_slope(elevation, max_slope, H, W):
+    """Lower terrain so no slope exceeds max_slope (meters per pixel).
+
+    Iterative relaxation: each pass enforces that no cell is more than
+    max_slope * distance above any of its 8 neighbors.  Only lowers
+    terrain, never raises it.  Converges when no cell changes.
+    """
+    result = elevation.copy()
+    for iteration in range(200):
+        padded = np.full((H + 2, W + 2), np.inf, dtype=np.float64)
+        padded[1:-1, 1:-1] = result
+        padded[1:-1, 0] = result[:, -1]   # longitude wrap
+        padded[1:-1, -1] = result[:, 0]
+
+        prev = result.copy()
+        for k in range(8):
+            dr, dc = int(_DR[k]), int(_DC[k])
+            dist = float(_DIST[k])
+            neighbor = padded[1 + dr : H + 1 + dr, 1 + dc : W + 1 + dc]
+            max_allowed = neighbor + max_slope * dist
+            result = np.minimum(result, max_allowed)
+
+        if np.allclose(result, prev, atol=0.01):
+            break
+
+    return result
+
+
 def generate_rivers(world: WorldData, params: WorldParams):
     """Generate river network using pit-filled D8 flow + valley carving.
 
@@ -280,13 +308,17 @@ def generate_rivers(world: WorldData, params: WorldParams):
         )
 
     # === Valley carving ===
-    # Only carve land, not lake surfaces
+    # Only carve land, not lake surfaces.
+    # Multi-scale smoothing: narrow gorges + broad floodplains.
+    # In flat terrain, the broad pass prevents 1-pixel trenches.
     max_acc = accumulation.max()
     if max_acc > 0 and params.valley_carve_strength > 0:
         log_flow = np.log1p(accumulation / max_acc * 1000.0)
         log_flow_norm = log_flow / max(log_flow.max(), 1e-10)
-        carve_depth = params.valley_carve_strength * log_flow_norm * land_mask
-        carve_depth = gaussian_filter(carve_depth, sigma=2.0)
+        carve_raw = params.valley_carve_strength * log_flow_norm * land_mask
+        carve_narrow = gaussian_filter(carve_raw, sigma=2.0)
+        carve_broad = gaussian_filter(carve_raw, sigma=5.0) * 0.6
+        carve_depth = np.maximum(carve_narrow, carve_broad)
         elevation_carved = elevation - carve_depth
     else:
         elevation_carved = elevation
@@ -311,6 +343,12 @@ def generate_rivers(world: WorldData, params: WorldParams):
         _inject_lake_outflow(
             lake_labels2, pour_points2, accumulation2,
             flow_dr2, flow_dc2, lake_mask, precipitation, filled2, H, W,
+        )
+
+    # --- Enforce maximum terrain slope (only lowers, never raises) ---
+    if params.max_terrain_slope > 0:
+        elevation_carved = _enforce_max_slope(
+            elevation_carved, params.max_terrain_slope, H, W,
         )
 
     # Store carved elevation

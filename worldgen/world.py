@@ -79,6 +79,7 @@ class WorldParams:
     river_threshold: float = 0.02  # fraction of max accumulation to show
     pit_fill_epsilon: float = 0.01  # meters, minimum slope in filled terrain
     valley_carve_strength: float = 50.0  # meters, max valley depth scaling
+    max_terrain_slope: float = 0.0  # meters/pixel, max slope (0 = disabled)
 
     # Biomes
     # (uses temperature + precipitation, no extra params)

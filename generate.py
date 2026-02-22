@@ -115,6 +115,10 @@ def main():
         "--sea-level", type=float, default=None,
         help="Fixed sea level in meters; overrides --land-fraction",
     )
+    parser.add_argument(
+        "--max-slope", type=float, default=None,
+        help="Max terrain slope in meters/pixel; smooths steep cliffs (0 = disabled)",
+    )
 
     args = parser.parse_args()
 
@@ -144,6 +148,8 @@ def main():
             params.target_land_fraction = args.land_fraction
         if args.sea_level is not None:
             params.sea_level = args.sea_level
+        if args.max_slope is not None:
+            params.max_terrain_slope = args.max_slope
 
         world = WorldData(params)
 

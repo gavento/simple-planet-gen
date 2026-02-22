@@ -2,16 +2,21 @@
 
 from __future__ import annotations
 
+import heapq
+
 import numpy as np
 from scipy.ndimage import binary_dilation, gaussian_filter, label, sobel
 
 from worldgen.noise import spherical_fbm
 from worldgen.world import WorldData, WorldParams
 
+# 8 neighbor offsets (same as rivers.py)
+_DR = np.array([-1, -1, 0, 1, 1, 1, 0, -1], dtype=np.int32)
+_DC = np.array([0, 1, 1, 1, 0, -1, -1, -1], dtype=np.int32)
+
 
 def _merge_labels_longitude(labels, H, W):
     """Merge connected-component labels across the longitude seam."""
-    # Union-find style: map higher label → lower label
     merge = {}
 
     def root(x):
@@ -36,7 +41,6 @@ def _find_pour_point(water_mask, elevation, land_mask, H, W):
 
     Returns (pour_row, pour_col, pour_elevation) or None if no rim found.
     """
-    # Pad for longitude wrap before dilation
     padded = np.pad(water_mask, ((0, 0), (1, 1)), mode="wrap")
     dilated_padded = binary_dilation(padded, structure=np.ones((3, 3)))
     dilated = dilated_padded[:, 1:-1]
@@ -48,6 +52,79 @@ def _find_pour_point(water_mask, elevation, land_mask, H, W):
 
     pour_idx = np.argmin(elevation[rim_r, rim_c])
     return rim_r[pour_idx], rim_c[pour_idx], elevation[rim_r[pour_idx], rim_c[pour_idx]]
+
+
+def _find_outlet_path(water, land_mask, elevation, ocean_label, labels, H, W):
+    """Find the lowest-saddle path from a lake's rim to the ocean.
+
+    Uses minimax Dijkstra: finds the path whose maximum elevation is
+    minimised (i.e. crosses the lowest ridge between the lake and the
+    ocean).  Returns (path, saddle_elev) or None.
+
+    path is a list of (row, col) from the rim cell to the ocean cell.
+    saddle_elev is the maximum elevation along this path.
+    """
+    # Rim = land cells adjacent to the water body
+    padded = np.pad(water, ((0, 0), (1, 1)), mode="wrap")
+    dilated = binary_dilation(padded, structure=np.ones((3, 3)))[:, 1:-1]
+    rim = dilated & ~water & land_mask
+    rim_r, rim_c = np.where(rim)
+    if len(rim_r) == 0:
+        return None
+
+    # Minimax Dijkstra: priority = max elevation encountered so far
+    best = np.full((H, W), np.inf)
+    parent_r = np.full((H, W), -1, dtype=np.int32)
+    parent_c = np.full((H, W), -1, dtype=np.int32)
+    heap = []
+
+    for i in range(len(rim_r)):
+        r, c = int(rim_r[i]), int(rim_c[i])
+        e = float(elevation[r, c])
+        if e < best[r, c]:
+            best[r, c] = e
+            heapq.heappush(heap, (e, r, c))
+
+    target = None
+    saddle_elev = None
+    while heap:
+        max_e, r, c = heapq.heappop(heap)
+        if max_e > best[r, c]:
+            continue
+        # Reached the true ocean?
+        if labels[r, c] == ocean_label:
+            target = (r, c)
+            saddle_elev = max_e
+            break
+
+        for k in range(8):
+            nr = r + int(_DR[k])
+            nc = (c + int(_DC[k])) % W
+            if nr < 0 or nr >= H:
+                continue
+            if water[nr, nc]:
+                continue  # don't re-enter this lake
+            new_max = max(max_e, float(elevation[nr, nc]))
+            if new_max < best[nr, nc]:
+                best[nr, nc] = new_max
+                parent_r[nr, nc] = r
+                parent_c[nr, nc] = c
+                heapq.heappush(heap, (new_max, nr, nc))
+
+    if target is None:
+        return None
+
+    # Trace path back from ocean to rim
+    path = []
+    r, c = target
+    while parent_r[r, c] >= 0:
+        path.append((r, c))
+        pr, pc = int(parent_r[r, c]), int(parent_c[r, c])
+        r, c = pr, pc
+    path.append((r, c))  # the rim cell
+    path.reverse()  # rim → ocean
+
+    return path, saddle_elev
 
 
 def generate_lakes(world: WorldData, params: WorldParams):
@@ -93,37 +170,78 @@ def generate_lakes(world: WorldData, params: WorldParams):
     # All other water bodies are inland
     inland_labels = unique_labels[unique_labels != ocean_label]
 
+    # --- Phase 1: compute outlet paths on unmodified elevation ---
+    outlet_info = {}  # lbl -> (path, saddle_elev) or None
+    for lbl in inland_labels:
+        water = labels == lbl
+        n_cells = np.sum(water)
+        if n_cells < params.min_lake_cells:
+            outlet_info[lbl] = None
+            continue
+        outlet_info[lbl] = _find_outlet_path(
+            water, land_mask, elevation, ocean_label, labels, H, W,
+        )
+
+    # --- Phase 2: set lake levels and carve outlet channels ---
+    # Accumulate carve depths into a map, then smooth for valley profiles
+    outlet_carve = np.zeros((H, W), dtype=np.float64)
+    outlet_paths = []  # for thin fixup after smoothing
+
     n_converted = 0
     n_removed = 0
     for lbl in inland_labels:
         water = labels == lbl
         n_cells = np.sum(water)
 
-        # Skip tiny fragments (< min_lake_cells pixels)
         if n_cells < params.min_lake_cells:
-            # Too small: fill in as land (raise elevation above sea level)
             elevation[water] = sea_level + 5.0
             land_mask[water] = True
             n_removed += 1
             continue
 
-        # Find lake level from rim elevation profile.
-        # Using the minimum rim cell would cluster all inland seas near sea
-        # level. Instead, use a low percentile of rim elevations — this models
-        # natural damming (sediment, moraines) at the narrowest outlet and
-        # gives each lake a surface tied to its surrounding terrain.
-        padded = np.pad(water, ((0, 0), (1, 1)), mode="wrap")
-        dilated = binary_dilation(padded, structure=np.ones((3, 3)))[:, 1:-1]
-        rim = dilated & ~water & land_mask
-        rim_r, rim_c = np.where(rim)
-        if len(rim_r) == 0:
+        result = outlet_info[lbl]
+        if result is None:
             continue
 
-        rim_elevs = elevation[rim_r, rim_c]
-        lake_level = float(np.percentile(rim_elevs, 20))
-        elevation[water] = lake_level - 1.0
+        path, saddle_elev = result
+
+        # Lake fills up to the saddle (the lowest ridge to the ocean).
+        lake_level = max(saddle_elev - 1.0, 1.0)
+        elevation[water] = lake_level
+
+        # Compute carve depths along the outlet channel (don't modify
+        # elevation yet — we smooth the full carve map first).
+        prev = lake_level
+        path_targets = []  # (r, c, target_elev) for final fixup
+        for r, c in path:
+            target = prev - 0.5
+            if elevation[r, c] > target:
+                outlet_carve[r, c] = max(
+                    outlet_carve[r, c], elevation[r, c] - target,
+                )
+                path_targets.append((r, c, target))
+                prev = target
+            else:
+                path_targets.append((r, c, float(elevation[r, c])))
+                prev = float(elevation[r, c])
+
+        outlet_paths.append(path_targets)
         lake_mask[water] = True
         n_converted += 1
+
+    # Smooth carve depths into wide valley profiles, then apply.
+    # This creates gradual slopes instead of 1-pixel trenches.
+    if np.any(outlet_carve > 0):
+        valley_profile = gaussian_filter(outlet_carve, sigma=5.0)
+        valley_land = valley_profile * land_mask * ~lake_mask
+        elevation -= valley_land
+
+        # Thin fixup: ensure the channel floor is passable after smoothing
+        # (small correction on already-lowered terrain, not a raw trench)
+        for path_targets in outlet_paths:
+            for r, c, target in path_targets:
+                if elevation[r, c] > target:
+                    elevation[r, c] = target
 
     if n_converted > 0 or n_removed > 0:
         print(f"    Lakes: {n_converted} inland seas → lakes, {n_removed} tiny fragments filled")
@@ -181,7 +299,7 @@ def generate_lakes(world: WorldData, params: WorldParams):
                 # Set to a flat surface slightly below surrounding terrain
                 rim_elev = _find_pour_point(gl_water, elevation, land_mask & ~gl_water, H, W)
                 if rim_elev is not None:
-                    elevation[gl_water] = rim_elev[2]
+                    elevation[gl_water] = max(rim_elev[2], 1.0)
                 else:
                     elevation[gl_water] = sea_level
                 lake_mask[gl_water] = True
