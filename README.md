@@ -1,6 +1,8 @@
 # worldgen
 
-A simple toy procedural world map generator. Produces Earth-like maps with tectonic plates, elevation, climate, rivers, lakes, and biomes — not physically accurate, but visually plausible.
+A simple toy procedural world map generator. Produces Earth-like maps with tectonic plates, elevation, climate, rivers, lakes, and biomes — not physically accurate, but visually plausible. Modular: steps and layers can be computed and tweaked independently - intended as an experiment as well as a sandbox. Written with Claude Opus 4.6.
+
+Currently, the tectonic generation could be improved (e.g. more complex polygons, larger continents, etc); lakes and river carving sometimes generate artifacts and suffer from 8-directionality (more so near the poles) - could use a systematic rewrite; volcanic activityy is missing (would add more flavor to islands and mountains).
 
 ## Pipeline
 
