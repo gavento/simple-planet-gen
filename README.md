@@ -4,6 +4,8 @@ A simple toy procedural world map generator. Produces Earth-like maps with tecto
 
 Currently, the tectonic generation could be improved (e.g. more complex polygons, larger continents, etc); lakes and river carving sometimes generate artifacts and suffer from 8-directionality (more so near the poles) - could use a systematic rewrite; volcanic activityy is missing (would add more flavor to islands and mountains).
 
+![Biomes + Terrain](example/14-biomes_terrain.webp)
+
 ## Pipeline
 
 The generator runs layers in sequence, each building on the previous:
@@ -18,6 +20,16 @@ The generator runs layers in sequence, each building on the previous:
 8. **Precipitation** — Moisture advection along wind field with orographic lift/rain shadow, evaporation from warm ocean, and moisture decay over land.
 9. **Rivers** — Priority-flood pit filling, D8 flow accumulation, lake pour-point outflow injection, two-pass valley carving.
 10. **Biomes** — Whittaker-style classification from temperature and precipitation.
+
+### Example outputs
+
+| Plates | Elevation | Ocean currents |
+|--------|-----------|----------------|
+| ![](example/01-plates.webp) | ![](example/02-elevation.webp) | ![](example/05-ocean_currents.webp) |
+
+| Temperature | Winds | Precipitation |
+|-------------|-------|---------------|
+| ![](example/07-temperature_land.webp) | ![](example/08-winds.webp) | ![](example/09-precipitation.webp) |
 
 ## Setup
 
