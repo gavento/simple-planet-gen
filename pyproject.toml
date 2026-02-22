@@ -8,6 +8,7 @@ dependencies = [
     "scipy>=1.12",
     "matplotlib>=3.8",
     "scikit-image>=0.22",
+    "cartopy>=0.22",
 ]
 
 [build-system]

@@ -4,7 +4,7 @@ A simple toy procedural world map generator. Produces Earth-like maps with tecto
 
 Currently, the tectonic generation could be improved (e.g. more complex polygons, larger continents, etc); lakes and river carving sometimes generate artifacts and suffer from 8-directionality (more so near the poles) - could use a systematic rewrite; volcanic activityy is missing (would add more flavor to islands and mountains).
 
-![Biomes + Terrain](example/14-biomes_terrain-cut.webp)
+![Biomes + Terrain](example/15-biomes_terrain_clean.webp)
 
 ## Pipeline
 
@@ -56,7 +56,23 @@ uv run python generate.py --plot elevation
 
 # Custom DPI for plots
 uv run python generate.py --dpi 300
+
+# Use a different map projection
+uv run python generate.py --projection mollweide
 ```
+
+### Map projections
+
+All plots support `--projection`:
+
+| Projection | Description |
+|------------|-------------|
+| `equirectangular` | Default, plain grid (no cartopy needed) |
+| `mercator` | Conformal cylindrical, clips at ±85° |
+| `mollweide` | Equal-area elliptical |
+| `robinson` | Compromise (similar to Winkel Tripel) |
+| `orthographic` | Dual-hemisphere globe view |
+| `homolosine` | Interrupted Goode Homolosine |
 
 ## Output
 
@@ -65,6 +81,6 @@ All output goes to `--output-dir` (default: `output/`):
 ```
 output/
   world_data.npz          # world data (all layers as numpy arrays)
-  01-plates.png           14-biomes_terrain.png
+  01-plates.png           15-biomes_terrain_clean.png
   02-elevation.png        ...
 ```

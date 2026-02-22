@@ -33,6 +33,7 @@ import time
 from pathlib import Path
 
 from worldgen.layers import LAYER_NAMES, run_layer, run_pipeline
+from worldgen.projections import PROJECTION_NAMES, make_projected_fig
 from worldgen.viz import PLOT_FUNCTIONS, plot_all, plot_layer
 from worldgen.world import WorldData, WorldParams
 
@@ -96,6 +97,11 @@ def main():
     parser.add_argument(
         "--dpi", type=int, default=None,
         help="Plot DPI (default: auto-scale to match data resolution)",
+    )
+    parser.add_argument(
+        "--projection", type=str, default="equirectangular",
+        choices=PROJECTION_NAMES,
+        help="Map projection (default: equirectangular)",
     )
 
     # Parameter overrides
@@ -178,16 +184,22 @@ def main():
 
     if args.plot:
         print(f"Plotting {args.plot} (dpi={dpi})...")
-        fig, ax = plt.subplots(1, 1, figsize=(16, 8))
-        plot_layer(world, args.plot, ax=ax)
         output_dir.mkdir(parents=True, exist_ok=True)
+        projection = args.projection
+        fig, map_axes, cbar_ax, transform = make_projected_fig(projection)
+        for i, map_ax in enumerate(map_axes):
+            cb = cbar_ax if i == len(map_axes) - 1 else None
+            plot_layer(world, args.plot, ax=map_ax, cbar_ax=cb, transform=transform)
         out_path = output_dir / f"{args.plot}.png"
-        fig.savefig(out_path, dpi=dpi, bbox_inches="tight")
+        save_kw = {"dpi": dpi}
+        if projection != "equirectangular":
+            save_kw["bbox_inches"] = "tight"
+        fig.savefig(out_path, **save_kw)
         plt.close(fig)
         print(f"  Saved {out_path}")
     else:
         print(f"Generating all plots (dpi={dpi})...")
-        plot_all(world, output_dir=output_dir, dpi=dpi)
+        plot_all(world, output_dir=output_dir, dpi=dpi, projection=args.projection)
 
 
 if __name__ == "__main__":

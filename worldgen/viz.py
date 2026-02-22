@@ -83,24 +83,10 @@ def _make_biome_cmap():
 # --- Layout helpers ---
 
 
-def _make_fig_axes():
-    """Create figure with fixed map axes and colorbar axes.
-
-    Always reserves the same space so all plots have identical map size.
-    Returns (fig, map_ax, cbar_ax).
-    """
-    fig = plt.figure(figsize=(16, 8))
-    map_ax = fig.add_axes([0.06, 0.08, 0.78, 0.85])
-    cbar_ax = fig.add_axes([0.86, 0.08, 0.02, 0.85])
-    return fig, map_ax, cbar_ax
-
-
 def _colorbar(im, cbar_ax, label):
-    """Add colorbar to the dedicated cbar_ax, or hide it."""
+    """Add colorbar to the dedicated cbar_ax."""
     if cbar_ax is not None:
         plt.colorbar(im, cax=cbar_ax, label=label)
-    else:
-        plt.colorbar(im, ax=im.axes, label=label, shrink=0.7)
 
 
 def _hide_cbar(cbar_ax):
@@ -116,14 +102,38 @@ def _extent(world: WorldData):
     return [-180 - dlon, 180 + dlon, -90 - dlat, 90 + dlat]
 
 
-def _setup_ax(ax, title: str, world: WorldData):
+def _map_imshow(ax, data, world, transform=None, **kw):
+    """imshow with automatic extent and optional CRS transform."""
+    kw.setdefault("extent", _extent(world))
+    kw.setdefault("origin", "upper")
+    if transform is not None:
+        kw["transform"] = transform
+    return ax.imshow(data, **kw)
+
+
+def _map_quiver(ax, *args, transform=None, **kw):
+    """quiver with optional CRS transform."""
+    if transform is not None:
+        kw["transform"] = transform
+    return ax.quiver(*args, **kw)
+
+
+def _map_text(ax, x, y, text, transform=None, **kw):
+    """text with optional CRS transform."""
+    if transform is not None:
+        kw["transform"] = transform
+    return ax.text(x, y, text, **kw)
+
+
+def _setup_ax(ax, title: str, world: WorldData, transform=None):
     """Configure axis for map display."""
     ax.set_title(title, fontsize=12, fontweight="bold")
-    ax.set_xlabel("Longitude")
-    ax.set_ylabel("Latitude")
-    ax.set_xlim(-180, 180)
-    ax.set_ylim(-90, 90)
-    ax.set_aspect("equal")
+    if transform is None:
+        ax.set_xlabel("Longitude")
+        ax.set_ylabel("Latitude")
+        ax.set_xlim(-180, 180)
+        ax.set_ylim(-90, 90)
+        ax.set_aspect("equal")
 
 
 def _hillshade(elevation, azimuth=315, altitude=45):
@@ -159,24 +169,24 @@ def _hillshade(elevation, azimuth=315, altitude=45):
 
 # --- Individual layer plot functions ---
 # All accept ax=None, cbar_ax=None for consistent layout.
+# Pass transform=<CRS> via **_kw for projected map support.
 
 
 def plot_elevation(world: WorldData, ax=None, cbar_ax=None, **_kw):
     """Plot elevation with terrain colormap."""
     if ax is None:
         _, ax = plt.subplots(1, 1, figsize=(16, 8))
+    transform = _kw.get("transform")
     elevation = world["elevation"]
-    im = ax.imshow(
-        elevation,
-        extent=_extent(world),
+    im = _map_imshow(
+        ax, elevation, world, transform=transform,
         cmap=TERRAIN_CMAP,
         vmin=TERRAIN_VMIN,
         vmax=TERRAIN_VMAX,
         interpolation="bilinear",
-        origin="upper",
     )
     _colorbar(im, cbar_ax, "Elevation (m)")
-    _setup_ax(ax, "Elevation", world)
+    _setup_ax(ax, "Elevation", world, transform=transform)
     return im
 
 
@@ -184,23 +194,22 @@ def plot_elevation_land(world: WorldData, ax=None, cbar_ax=None, **_kw):
     """Plot pre-carve elevation for land only, with uniform ocean color."""
     if ax is None:
         _, ax = plt.subplots(1, 1, figsize=(16, 8))
+    transform = _kw.get("transform")
     elevation = world["elevation_raw"] if "elevation_raw" in world else world["elevation"]
     land_mask = world["land_mask"]
 
     ax.set_facecolor("#2266aa")
     display = np.ma.masked_where(~land_mask, elevation)
-    im = ax.imshow(
-        display,
-        extent=_extent(world),
+    im = _map_imshow(
+        ax, display, world, transform=transform,
         cmap=LAND_CMAP,
         vmin=0,
         vmax=8000,
         interpolation="nearest",
-        origin="upper",
     )
-    _render_lake_overlay(world, ax)
+    _render_lake_overlay(world, ax, transform=transform)
     _colorbar(im, cbar_ax, "Elevation (m)")
-    _setup_ax(ax, "Land Elevation", world)
+    _setup_ax(ax, "Land Elevation", world, transform=transform)
     return im
 
 
@@ -208,23 +217,22 @@ def plot_terrain_carved(world: WorldData, ax=None, cbar_ax=None, **_kw):
     """Plot post-river carved terrain (land only)."""
     if ax is None:
         _, ax = plt.subplots(1, 1, figsize=(16, 8))
+    transform = _kw.get("transform")
     elevation = world["elevation"]
     land_mask = world["land_mask"]
 
     ax.set_facecolor("#2266aa")
     display = np.ma.masked_where(~land_mask, elevation)
-    im = ax.imshow(
-        display,
-        extent=_extent(world),
+    im = _map_imshow(
+        ax, display, world, transform=transform,
         cmap=LAND_CMAP,
         vmin=0,
         vmax=8000,
         interpolation="nearest",
-        origin="upper",
     )
-    _render_lake_overlay(world, ax)
+    _render_lake_overlay(world, ax, transform=transform)
     _colorbar(im, cbar_ax, "Elevation (m)")
-    _setup_ax(ax, "Terrain (post-river carving)", world)
+    _setup_ax(ax, "Terrain (post-river carving)", world, transform=transform)
     return im
 
 
@@ -232,6 +240,7 @@ def plot_temperature_land(world: WorldData, ax=None, cbar_ax=None, **_kw):
     """Plot temperature for land only, with uniform ocean color."""
     if ax is None:
         _, ax = plt.subplots(1, 1, figsize=(16, 8))
+    transform = _kw.get("transform")
     temp = world["temperature"]
     land_mask = world["land_mask"]
 
@@ -239,17 +248,15 @@ def plot_temperature_land(world: WorldData, ax=None, cbar_ax=None, **_kw):
     display = np.ma.masked_where(~land_mask, temp)
     cmap = plt.get_cmap("RdBu_r").copy()
     cmap.set_bad(alpha=0)
-    im = ax.imshow(
-        display,
-        extent=_extent(world),
+    im = _map_imshow(
+        ax, display, world, transform=transform,
         cmap=cmap,
         vmin=-40,
         vmax=35,
         interpolation="nearest",
-        origin="upper",
     )
     _colorbar(im, cbar_ax, "Temperature (°C)")
-    _setup_ax(ax, "Land Temperature", world)
+    _setup_ax(ax, "Land Temperature", world, transform=transform)
     return im
 
 
@@ -257,17 +264,16 @@ def plot_plates(world: WorldData, ax=None, cbar_ax=None, **_kw):
     """Plot tectonic plates with boundaries and motion vectors."""
     if ax is None:
         _, ax = plt.subplots(1, 1, figsize=(16, 8))
+    transform = _kw.get("transform")
     _hide_cbar(cbar_ax)
     plate_ids = world["plate_ids"]
     num_plates = world.metadata.get("num_plates", plate_ids.max() + 1)
 
     cmap = plt.get_cmap("tab20", num_plates)
-    im = ax.imshow(
-        plate_ids,
-        extent=_extent(world),
+    im = _map_imshow(
+        ax, plate_ids, world, transform=transform,
         cmap=cmap,
         interpolation="nearest",
-        origin="upper",
     )
 
     # Overlay boundaries
@@ -281,12 +287,13 @@ def plot_plates(world: WorldData, ax=None, cbar_ax=None, **_kw):
     div_boundary = boundary_mask & (convergence < -0.1)
     overlay[conv_boundary] = [1, 0, 0, 0.7]  # red
     overlay[div_boundary] = [0, 0.3, 1, 0.7]  # blue
-    ax.imshow(overlay, extent=_extent(world), interpolation="nearest", origin="upper")
+    _map_imshow(ax, overlay, world, transform=transform, interpolation="nearest")
 
     # Overlay plate motion vectors
     if "plate_centers" in world and "plate_velocities" in world:
         centers = world["plate_centers"]
         vels = world["plate_velocities"]
+        lons, lats, us, vs = [], [], [], []
         for i in range(len(centers)):
             px, py, pz = centers[i]
             lat_c = np.degrees(np.arcsin(np.clip(pz, -1, 1)))
@@ -300,17 +307,21 @@ def plot_plates(world: WorldData, ax=None, cbar_ax=None, **_kw):
                 np.cos(lat_r),
             ])
             vel_3d = vels[i]
-            u = np.dot(vel_3d, east)
-            v = np.dot(vel_3d, north)
-            ax.quiver(
-                lon_c, lat_c, u, v,
-                color="white", scale=10, width=0.005,
-                headwidth=3, headlength=4,
-                edgecolor="black", linewidth=0.5,
-                zorder=10,
-            )
+            lons.append(lon_c)
+            lats.append(lat_c)
+            us.append(np.dot(vel_3d, east))
+            vs.append(np.dot(vel_3d, north))
+        _map_quiver(
+            ax, np.array(lons), np.array(lats),
+            np.array(us), np.array(vs), transform=transform,
+            color="white", scale=10, width=0.005,
+            headwidth=3, headlength=4,
+            edgecolor="black", linewidth=0.5,
+            zorder=10,
+        )
 
-    _setup_ax(ax, "Tectonic Plates (red=convergent, blue=divergent)", world)
+    _setup_ax(ax, "Tectonic Plates (red=convergent, blue=divergent)", world,
+              transform=transform)
     return im
 
 
@@ -318,6 +329,7 @@ def plot_land_mask(world: WorldData, ax=None, cbar_ax=None, **_kw):
     """Plot land/ocean/lake mask."""
     if ax is None:
         _, ax = plt.subplots(1, 1, figsize=(16, 8))
+    transform = _kw.get("transform")
     _hide_cbar(cbar_ax)
     land_mask = world["land_mask"]
     lake_mask = world["lake_mask"] if "lake_mask" in world else np.zeros_like(land_mask)
@@ -327,14 +339,12 @@ def plot_land_mask(world: WorldData, ax=None, cbar_ax=None, **_kw):
     display[land_mask] = 1
     display[lake_mask] = 2
     cmap = mcolors.ListedColormap(["#2266aa", "#55aa55", LAKE_COLOR])
-    im = ax.imshow(
-        display,
-        extent=_extent(world),
+    im = _map_imshow(
+        ax, display, world, transform=transform,
         cmap=cmap,
         vmin=-0.5,
         vmax=2.5,
         interpolation="nearest",
-        origin="upper",
     )
     frac = world.metadata.get("land_fraction", 0)
     n_lakes = world.metadata.get("n_lakes", 0)
@@ -342,7 +352,7 @@ def plot_land_mask(world: WorldData, ax=None, cbar_ax=None, **_kw):
     if n_lakes > 0:
         title += f", {n_lakes} lakes"
     title += ")"
-    _setup_ax(ax, title, world)
+    _setup_ax(ax, title, world, transform=transform)
     return im
 
 
@@ -350,18 +360,17 @@ def plot_temperature(world: WorldData, ax=None, cbar_ax=None, **_kw):
     """Plot temperature map."""
     if ax is None:
         _, ax = plt.subplots(1, 1, figsize=(16, 8))
+    transform = _kw.get("transform")
     temp = world["temperature"]
-    im = ax.imshow(
-        temp,
-        extent=_extent(world),
+    im = _map_imshow(
+        ax, temp, world, transform=transform,
         cmap="RdBu_r",
         vmin=-40,
         vmax=35,
         interpolation="bilinear",
-        origin="upper",
     )
     _colorbar(im, cbar_ax, "Temperature (°C)")
-    _setup_ax(ax, "Annual Mean Temperature", world)
+    _setup_ax(ax, "Annual Mean Temperature", world, transform=transform)
     return im
 
 
@@ -369,10 +378,11 @@ def plot_winds(world: WorldData, ax=None, cbar_ax=None, **_kw):
     """Plot wind patterns as quiver plot over land mask."""
     if ax is None:
         _, ax = plt.subplots(1, 1, figsize=(16, 8))
+    transform = _kw.get("transform")
     _hide_cbar(cbar_ax)
 
     # Background: land/ocean
-    plot_land_mask(world, ax=ax)
+    plot_land_mask(world, ax=ax, **_kw)
 
     # Subsample for quiver readability - target ~25 rows x 50 cols
     step_y = max(1, world.height // 25)
@@ -383,12 +393,8 @@ def plot_winds(world: WorldData, ax=None, cbar_ax=None, **_kw):
     v_sub = world["wind_v"][::step_y, ::step_x]
 
     speed = np.sqrt(u_sub**2 + v_sub**2)
-    ax.quiver(
-        lon_sub,
-        lat_sub,
-        u_sub,
-        v_sub,
-        speed,
+    _map_quiver(
+        ax, lon_sub, lat_sub, u_sub, v_sub, speed, transform=transform,
         cmap="YlOrRd",
         scale=20,
         alpha=0.7,
@@ -396,32 +402,31 @@ def plot_winds(world: WorldData, ax=None, cbar_ax=None, **_kw):
         headwidth=4,
         headlength=5,
     )
-    _setup_ax(ax, "Prevailing Winds", world)
+    _setup_ax(ax, "Prevailing Winds", world, transform=transform)
 
 
 def plot_precipitation(world: WorldData, ax=None, cbar_ax=None, **_kw):
     """Plot precipitation map."""
     if ax is None:
         _, ax = plt.subplots(1, 1, figsize=(16, 8))
+    transform = _kw.get("transform")
     precip = world["precipitation"]
-    im = ax.imshow(
-        precip,
-        extent=_extent(world),
+    im = _map_imshow(
+        ax, precip, world, transform=transform,
         cmap="YlGnBu",
         vmin=0,
         vmax=3000,
         interpolation="bilinear",
-        origin="upper",
     )
     _colorbar(im, cbar_ax, "Precipitation (mm/yr)")
-    _setup_ax(ax, "Annual Precipitation", world)
+    _setup_ax(ax, "Annual Precipitation", world, transform=transform)
     return im
 
 
 LAKE_COLOR = "#3a7a9e"
 
 
-def _render_lake_overlay(world, ax):
+def _render_lake_overlay(world, ax, transform=None):
     """Render lake cells as a distinct lighter blue. Shared by land/biome plots."""
     if "lake_mask" not in world:
         return
@@ -431,12 +436,10 @@ def _render_lake_overlay(world, ax):
     lake_rgba = np.zeros((*lake_mask.shape, 4))
     r, g, b = mcolors.to_rgb(LAKE_COLOR)
     lake_rgba[lake_mask] = [r, g, b, 1.0]
-    ax.imshow(
-        lake_rgba, extent=_extent(world), interpolation="nearest", origin="upper"
-    )
+    _map_imshow(ax, lake_rgba, world, transform=transform, interpolation="nearest")
 
 
-def _render_lake_labels(world, ax):
+def _render_lake_labels(world, ax, transform=None):
     """Annotate each lake with its surface elevation."""
     if "lake_mask" not in world:
         return
@@ -457,8 +460,8 @@ def _render_lake_labels(world, ax):
         lat = 90.0 - (cr + 0.5) * 180.0 / H
         lon = -180.0 + (cc + 0.5) * 360.0 / W
         elev = float(elevation[rows[0], cols[0]])
-        ax.text(
-            lon, lat, f"{elev:.0f}m",
+        _map_text(
+            ax, lon, lat, f"{elev:.0f}m", transform=transform,
             ha="center", va="center",
             fontsize=5, color="white",
             fontweight="bold",
@@ -466,7 +469,7 @@ def _render_lake_labels(world, ax):
         )
 
 
-def _render_river_overlay(world, ax):
+def _render_river_overlay(world, ax, transform=None):
     """Render river overlay with flow-proportional width.
 
     Uses multi-scale compositing: high-flow rivers are blurred wider,
@@ -509,51 +512,50 @@ def _render_river_overlay(world, ax):
     overlay[visible, 2] = 0.85
     overlay[visible, 3] = np.clip(composite[visible] ** 0.5 * 0.85, 0.05, 0.85)
 
-    ax.imshow(
-        overlay, extent=_extent(world), interpolation="nearest", origin="upper"
-    )
+    _map_imshow(ax, overlay, world, transform=transform, interpolation="nearest")
 
 
 def plot_rivers(world: WorldData, ax=None, cbar_ax=None, **_kw):
     """Plot rivers over terrain using continuous flow accumulation."""
     if ax is None:
         _, ax = plt.subplots(1, 1, figsize=(16, 8))
+    transform = _kw.get("transform")
 
     # Background: elevation (with colorbar)
-    plot_elevation(world, ax=ax, cbar_ax=cbar_ax)
-    _render_river_overlay(world, ax)
-    _setup_ax(ax, "Rivers", world)
+    plot_elevation(world, ax=ax, cbar_ax=cbar_ax, **_kw)
+    _render_river_overlay(world, ax, transform=transform)
+    _setup_ax(ax, "Rivers", world, transform=transform)
 
 
 def plot_rivers_land(world: WorldData, ax=None, cbar_ax=None, **_kw):
     """Plot rivers over land-only terrain with lakes."""
     if ax is None:
         _, ax = plt.subplots(1, 1, figsize=(16, 8))
+    transform = _kw.get("transform")
 
     # Background: land-only elevation (with colorbar, includes lake overlay)
-    plot_terrain_carved(world, ax=ax, cbar_ax=cbar_ax)
-    _render_river_overlay(world, ax)
-    _render_lake_labels(world, ax)
-    _setup_ax(ax, "Rivers (land)", world)
+    plot_terrain_carved(world, ax=ax, cbar_ax=cbar_ax, **_kw)
+    _render_river_overlay(world, ax, transform=transform)
+    _render_lake_labels(world, ax, transform=transform)
+    _setup_ax(ax, "Rivers (land)", world, transform=transform)
 
 
 def plot_biomes(world: WorldData, ax=None, cbar_ax=None, **_kw):
     """Plot biome classification."""
     if ax is None:
         _, ax = plt.subplots(1, 1, figsize=(16, 8))
+    transform = _kw.get("transform")
     _hide_cbar(cbar_ax)
 
     biome_cmap, biome_norm = _make_biome_cmap()
     biome_id = world["biome_id"]
-    im = ax.imshow(
-        biome_id,
-        extent=_extent(world),
+    im = _map_imshow(
+        ax, biome_id, world, transform=transform,
         cmap=biome_cmap,
         norm=biome_norm,
         interpolation="nearest",
-        origin="upper",
     )
-    _render_lake_overlay(world, ax)
+    _render_lake_overlay(world, ax, transform=transform)
 
     # Legend
     unique_biomes = np.unique(biome_id)
@@ -569,7 +571,7 @@ def plot_biomes(world: WorldData, ax=None, cbar_ax=None, **_kw):
         ncol=2,
         framealpha=0.8,
     )
-    _setup_ax(ax, "Biomes", world)
+    _setup_ax(ax, "Biomes", world, transform=transform)
     return im
 
 
@@ -581,6 +583,7 @@ def plot_biomes_terrain(world: WorldData, ax=None, cbar_ax=None, **_kw):
     """
     if ax is None:
         _, ax = plt.subplots(1, 1, figsize=(16, 8))
+    transform = _kw.get("transform")
     _hide_cbar(cbar_ax)
 
     biome_cmap, biome_norm = _make_biome_cmap()
@@ -615,12 +618,7 @@ def plot_biomes_terrain(world: WorldData, ax=None, cbar_ax=None, **_kw):
     biome_rgba[lake_mask, :3] = [r, g, b]
     biome_rgba[lake_mask, 3] = 1.0
 
-    ax.imshow(
-        biome_rgba,
-        extent=_extent(world),
-        interpolation="nearest",
-        origin="upper",
-    )
+    _map_imshow(ax, biome_rgba, world, transform=transform, interpolation="nearest")
 
     # Legend
     unique_biomes = np.unique(biome_id)
@@ -636,14 +634,63 @@ def plot_biomes_terrain(world: WorldData, ax=None, cbar_ax=None, **_kw):
         ncol=2,
         framealpha=0.8,
     )
-    _render_river_overlay(world, ax)
-    _setup_ax(ax, "Biomes + Terrain", world)
+    _render_river_overlay(world, ax, transform=transform)
+    _setup_ax(ax, "Biomes + Terrain", world, transform=transform)
+
+
+def plot_biomes_terrain_clean(world: WorldData, ax=None, cbar_ax=None, **_kw):
+    """Clean terrain + biomes render: no legend, no title, no axis decorations.
+
+    Ocean and lake colors are baked into the RGBA array so the figure
+    background can be fully transparent.
+    """
+    if ax is None:
+        _, ax = plt.subplots(1, 1, figsize=(16, 8))
+    transform = _kw.get("transform")
+    _hide_cbar(cbar_ax)
+
+    biome_cmap, biome_norm = _make_biome_cmap()
+    biome_id = world["biome_id"]
+    elevation = world["elevation"]
+    land_mask = world["land_mask"]
+
+    # Render biome colors as RGBA
+    mapper = plt.cm.ScalarMappable(norm=biome_norm, cmap=biome_cmap)
+    biome_rgba = mapper.to_rgba(biome_id)  # (H, W, 4) float in [0,1]
+
+    # Compute hillshade from elevation
+    shade = _hillshade(elevation)
+
+    # Blend: modulate biome RGB by hillshade (land only)
+    blend = 0.4 + 0.6 * shade
+    for c in range(3):
+        biome_rgba[:, :, c] = np.where(
+            land_mask,
+            np.clip(biome_rgba[:, :, c] * blend, 0, 1),
+            biome_rgba[:, :, c],
+        )
+
+    # Ocean: bake blue directly into RGBA (not via facecolor)
+    lake_mask = world["lake_mask"] if "lake_mask" in world else np.zeros_like(land_mask)
+    ocean_mask = ~land_mask & ~lake_mask
+    r_o, g_o, b_o = mcolors.to_rgb("#2266aa")
+    biome_rgba[ocean_mask] = [r_o, g_o, b_o, 1.0]
+    # Lakes: lake color
+    r_l, g_l, b_l = mcolors.to_rgb(LAKE_COLOR)
+    biome_rgba[lake_mask, :3] = [r_l, g_l, b_l]
+    biome_rgba[lake_mask, 3] = 1.0
+
+    _map_imshow(ax, biome_rgba, world, transform=transform, interpolation="nearest")
+    _render_river_overlay(world, ax, transform=transform)
+
+    ax.set_axis_off()
 
 
 def plot_ocean_currents(world: WorldData, ax=None, cbar_ax=None, **_kw):
     """Plot sea surface temperature anomaly from ocean currents."""
     if ax is None:
         _, ax = plt.subplots(1, 1, figsize=(16, 8))
+    transform = _kw.get("transform")
     sst = world["sst_anomaly"]
     land_mask = world["land_mask"]
     lake_mask = world["lake_mask"] if "lake_mask" in world else np.zeros_like(land_mask)
@@ -651,23 +698,21 @@ def plot_ocean_currents(world: WorldData, ax=None, cbar_ax=None, **_kw):
 
     # Show SST anomaly over ocean, grey out land and lakes
     display = np.where(not_ocean, np.nan, sst)
-    im = ax.imshow(
-        display,
-        extent=_extent(world),
+    im = _map_imshow(
+        ax, display, world, transform=transform,
         cmap="RdBu_r",
         vmin=-10,
         vmax=10,
         interpolation="bilinear",
-        origin="upper",
     )
     # Grey land+lake overlay
     land_overlay = np.full((*land_mask.shape, 4), 0.0)
     land_overlay[land_mask] = [0.5, 0.5, 0.5, 0.8]
     land_overlay[lake_mask] = [0.5, 0.5, 0.5, 0.8]
-    ax.imshow(land_overlay, extent=_extent(world), interpolation="nearest", origin="upper")
+    _map_imshow(ax, land_overlay, world, transform=transform, interpolation="nearest")
 
     _colorbar(im, cbar_ax, "SST Anomaly (°C)")
-    _setup_ax(ax, "Ocean Current SST Anomaly", world)
+    _setup_ax(ax, "Ocean Current SST Anomaly", world, transform=transform)
     return im
 
 
@@ -688,37 +733,56 @@ PLOT_FUNCTIONS = {
     "terrain_carved": plot_terrain_carved,
     "biomes": plot_biomes,
     "biomes_terrain": plot_biomes_terrain,
+    "biomes_terrain_clean": plot_biomes_terrain_clean,
 }
 
 
-def plot_layer(world: WorldData, layer_name: str, ax=None):
+def plot_layer(world: WorldData, layer_name: str, ax=None, **kwargs):
     """Plot a single layer by name."""
     if layer_name not in PLOT_FUNCTIONS:
         raise ValueError(
             f"Unknown plot: {layer_name}. Available: {list(PLOT_FUNCTIONS.keys())}"
         )
-    return PLOT_FUNCTIONS[layer_name](world, ax=ax)
+    return PLOT_FUNCTIONS[layer_name](world, ax=ax, **kwargs)
 
 
-def plot_all(world: WorldData, output_dir: str | Path = "output", dpi: int | None = None):
+def plot_all(
+    world: WorldData,
+    output_dir: str | Path = "output",
+    dpi: int | None = None,
+    projection: str = "equirectangular",
+):
     """Generate and save all available plots.
 
     Args:
         dpi: Dots per inch. If None, auto-scales so image width ≈ data width.
+        projection: Map projection name (see worldgen.projections.PROJECTION_NAMES).
     """
+    from worldgen.projections import make_projected_fig
+
     if dpi is None:
         # Auto: ~2 pixels per data cell in the plot area
         dpi = max(150, round(world.width / 6))
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    save_kw = {}
+    if projection != "equirectangular":
+        save_kw["bbox_inches"] = "tight"
+
     for idx, (name, plot_fn) in enumerate(PLOT_FUNCTIONS.items(), 1):
-        # Check if required data exists
         try:
-            fig, map_ax, cbar_ax = _make_fig_axes()
-            plot_fn(world, ax=map_ax, cbar_ax=cbar_ax)
+            fig, map_axes, cbar_ax, transform = make_projected_fig(projection)
+            for i, map_ax in enumerate(map_axes):
+                cb = cbar_ax if i == len(map_axes) - 1 else None
+                plot_fn(world, ax=map_ax, cbar_ax=cb, transform=transform)
             path = output_dir / f"{idx:02d}-{name}.png"
-            fig.savefig(path, dpi=dpi)
+            plot_save_kw = dict(save_kw)
+            if name == "biomes_terrain_clean":
+                plot_save_kw.update(
+                    bbox_inches="tight", pad_inches=0, transparent=True,
+                )
+            fig.savefig(path, dpi=dpi, **plot_save_kw)
             plt.close(fig)
             print(f"  Saved {path}")
         except KeyError as e:
